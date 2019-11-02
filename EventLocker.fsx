@@ -5,6 +5,7 @@ type EventHash =  {
 }
 
 //event hash lock file comparison
+
 type EventComparison =
     | SameEventSignature of EventHash
     | NewEventSignature of EventHash
@@ -13,9 +14,7 @@ type EventComparison =
 
 let eventListToMap list = list |> List.map (fun x -> x.Type, x) |> Map.ofList
 
-type Compare = EventHash list -> EventHash list -> EventComparison list
-let compareEventHash :Compare =
-    fun originalHashLock currentHashes ->
+let compareEventHash originalHashLock currentHashes =
     let origEventsMap = originalHashLock |> eventListToMap
     let currentEventsMap = currentHashes |> eventListToMap
     [
