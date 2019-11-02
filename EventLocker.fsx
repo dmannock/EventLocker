@@ -3,9 +3,24 @@ type EventHash =  {
     Type: string 
     Hash: string 
 }
+let createEventHash t h = {Type = t; Hash = h}
+
+// placeholder fn signature for primitive types currently
+let typeToEventHash (hashFn: string -> string) (t: Type) =
+    //get public signature for type
+    let getPublicSignatureForType (theType: Type) = (theType.Name, theType.Name)
+    //signature to string
+    let toSignatureString (name,t) = sprintf "%s:%s" name t
+    //hash signature string
+    let hashType theType =
+        theType
+        |> getPublicSignatureForType
+        |> toSignatureString
+        |> hashFn
+    createEventHash t.Name (hashType  t)
+    |> Array.singleton 
 
 //event hash lock file comparison
-
 type EventComparison =
     | SameEventSignature of EventHash
     | NewEventSignature of EventHash
