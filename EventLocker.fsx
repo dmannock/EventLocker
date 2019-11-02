@@ -32,8 +32,8 @@ let compareEventHash originalHashLock currentHashes =
             )
     ]
 
-let checkEventHashes orig current =
-    compareEventHash orig current
+let checkEventHashesForDifferences eventComparisons =
+    eventComparisons
     |> List.choose (
         function 
         | SameEventSignature(_) -> None
@@ -75,9 +75,10 @@ let checkEventHashes orig current =
 // ]
 // |> compareEventHash hashed1
 
-// //deleted
+// // //deleted
 // [
 //     { Type = "OrderPlaced"
 //       Hash = "FDC0ECD2A178BE2FF1C8EB59236E8092E6951905765362C19DFA07F600D44A6E" }
 // ]
 // |> compareEventHash hashed1
+// |> checkEventHashesForDifferences
