@@ -32,6 +32,19 @@ let compareEventHash originalHashLock currentHashes =
             )
     ]
 
+let checkEventHashes orig current =
+    compareEventHash orig current
+    |> List.choose (
+        function 
+        | SameEventSignature(_) -> None
+        | NewEventSignature(newEvent) -> Some (sprintf "New Event: %A" newEvent)
+        | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event: %A" deletedEvent)
+        | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
+    )
+    |> function
+    | [] -> Ok ()
+    | errors -> Error errors
+
 // test examples
 // let hashed1 = [
 //     { Type = "OrderPlaced"
