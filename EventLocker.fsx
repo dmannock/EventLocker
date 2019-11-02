@@ -1,4 +1,31 @@
 open System
+
+open Microsoft.FSharp.Reflection
+open System.Reflection
+// Taken from https://github.com/dmannock/FSharpUnionHelpers
+let getUnionCaseRecord (uc: UnionCaseInfo) = uc.GetFields() |> Array.tryHead |> Option.map (fun i -> i.PropertyType)
+// curently only cares about classes / records / unions top-level public signature
+let rec getTypesPublicSignature (t: Type) = 
+    let bindingFlags = BindingFlags.Public ||| BindingFlags.Instance
+    let getRecordFields t = FSharpType.GetRecordFields t |> Seq.map (fun x -> x.Name, x.PropertyType.Name)
+    if t.IsPrimitive then Seq.singleton (t.Name, t.Name)
+    else if t = typeof<String> then Seq.singleton (t.Name, t.Name)
+    else if FSharpType.IsRecord t then getRecordFields t
+    else if FSharpType.IsUnion t then 
+        FSharpType.GetUnionCases(t)
+        |> Seq.choose (getUnionCaseRecord >> Option.map getTypesPublicSignature)
+        |> Seq.collect id               
+    else 
+        seq { 
+            yield! t.GetProperties(bindingFlags) |> Seq.map (fun x -> x.Name, x.PropertyType.Name)
+            yield! t.GetFields(bindingFlags) |> Seq.map (fun x -> x.Name, x.FieldType.Name)
+        }
+    |> Seq.sortBy fst
+
+let toSignatureString typeName signature =
+    let fieldString = signature |> Seq.map (fun (name, t) -> sprintf "%s:%s" name t)
+    typeName + "=" + String.Join("#", fieldString) 
+
 type EventHash =  {
     Type: string 
     Hash: string 
@@ -7,18 +34,15 @@ let createEventHash t h = {Type = t; Hash = h}
 
 // placeholder fn signature for primitive types currently
 let typeToEventHash (hashFn: string -> string) (t: Type) =
-    //get public signature for type
-    let getPublicSignatureForType (theType: Type) = (theType.Name, theType.Name)
-    //signature to string
-    let toSignatureString (name,t) = sprintf "%s:%s" name t
-    //hash signature string
     let hashType theType =
         theType
-        |> getPublicSignatureForType
-        |> toSignatureString
+        //get public signature for type
+        |> getTypesPublicSignature
+        //signature to string
+        |> toSignatureString theType.Name
         |> hashFn
     createEventHash t.Name (hashType  t)
-    |> Array.singleton 
+    |> List.singleton 
 
 //event hash lock file comparison
 type EventComparison =
@@ -90,10 +114,17 @@ let checkEventHashesForDifferences eventComparisons =
 // ]
 // |> compareEventHash hashed1
 
-// // //deleted
+// //deleted
 // [
 //     { Type = "OrderPlaced"
 //       Hash = "FDC0ECD2A178BE2FF1C8EB59236E8092E6951905765362C19DFA07F600D44A6E" }
 // ]
 // |> compareEventHash hashed1
 // |> checkEventHashesForDifferences
+
+// // everythign should differ - 1 new, 2 deleted
+// typeToEventHash id typeof<string>
+// |> compareEventHash hashed1
+// |> checkEventHashesForDifferences
+
+// typeToEventHash id typeof<EventHash>
