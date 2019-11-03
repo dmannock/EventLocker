@@ -1,4 +1,6 @@
 open System
+[<Literal>]
+let EventLockFileName = "lockedevents.hash"
 
 open System.Reflection
 let matchingTypesInAssembly (predicate: Type -> bool) (asm: Assembly) =
@@ -61,9 +63,7 @@ let createEventHash t h = {Type = t; Hash = h}
 let typeToEventHash (hashFn: string -> string) (t: Type) =
     let hashType theType =
         theType
-        //get public signature for type
         |> getTypesPublicSignature
-        //signature to string
         |> toSignatureString theType.Name
         |> hashFn
     createEventHash t.Name (hashType  t)
@@ -109,6 +109,21 @@ let checkEventHashesForDifferences eventComparisons =
     | [] -> Ok ()
     | errors -> Error errors
 
+let readEventHashesFromFile file =
+    if IO.File.Exists file then
+        IO.File.ReadAllLines file
+        |> Array.choose (fun l -> 
+            match l.Split(',') with
+            | [|t; hash|] -> createEventHash t hash |> Some
+            | _ -> None) 
+        |> List.ofArray 
+        |> Some |> Option.filter (List.isEmpty >> not)
+    else None    
+
+let saveEventHashesToFile file eventHashes =
+    let lines = eventHashes |> Seq.map (fun { Type = t; Hash = hash} -> sprintf "%s,%s" t hash)
+    IO.File.WriteAllLines(file, lines)
+
 // test examples
 // let hashed1 = [
 //     { Type = "OrderPlaced"
@@ -153,3 +168,8 @@ let checkEventHashesForDifferences eventComparisons =
 // |> checkEventHashesForDifferences
 
 // typeToEventHash id typeof<EventHash>
+
+// file reading
+// readEventHashesFromFile EventLockFileName 
+// |> Option.map (compareEventHash hashed1)
+// |> Option.map checkEventHashesForDifferences
