@@ -20,6 +20,9 @@ let getMarkerTypeFromAssembly assemblyPath =
     | Some(t) -> t
     | None -> failwith "Unable to find marker type 'IEvent'"
 
+let getTypesUsingMarker (markerType: Type) =
+    Array.filter (fun t -> markerType.IsAssignableFrom(t) && markerType <> t)
+
 // test loading assembly
 // type IEvent = interface end
 // type AnEvent = {
