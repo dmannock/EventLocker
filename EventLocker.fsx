@@ -99,19 +99,6 @@ let compareEventHash originalHashLock currentHashes =
             )
     ]
 
-let checkEventHashesForDifferences eventComparisons =
-    eventComparisons
-    |> List.choose (
-        function 
-        | SameEventSignature(_) -> None
-        | NewEventSignature(newEvent) -> Some (sprintf "New Event: %A" newEvent)
-        | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event: %A" deletedEvent)
-        | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
-    )
-    |> function
-    | [] -> Ok ()
-    | errors -> Error errors
-
 let readEventHashesFromFile file =
     if IO.File.Exists file then
         IO.File.ReadAllLines file
@@ -133,60 +120,50 @@ let hashSha (text: string) =
         use sha = new Security.Cryptography.SHA256Managed()
         (System.Text.Encoding.UTF8.GetBytes text |> sha.ComputeHash |> BitConverter.ToString).Replace("-", String.Empty)
 
+let checkEventHashesForDifferences eventComparisons =
+    eventComparisons
+    |> List.choose (
+        function 
+        | SameEventSignature(_) -> None
+        | NewEventSignature(newEvent) -> Some (sprintf "New Event: %A" newEvent)
+        | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event: %A" deletedEvent)
+        | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
+    )
+    |> function
+    | [] -> Ok ()
+    | errors -> Error errors
+
+let addNewHashes hashLockFilePath originalEventHashes eventComparisons =
+    let mutatedEvents = eventComparisons |> List.choose (function 
+            | EventSignatureChanged(orig, changed) -> Some()
+            | DeletedEventSignature(deletedEvent) -> Some()
+            | _ -> None)
+    let newEvents = eventComparisons |> List.choose (function 
+            | NewEventSignature(event) -> Some event
+            | _ -> None)
+    match mutatedEvents, newEvents with
+    | [], [] -> Ok <| sprintf "No new events to add."
+    | [], newEvents ->
+        let origLookup = originalEventHashes |> eventListToMap
+        let originalWithNewEvents = 
+            newEvents 
+            |> List.fold (fun acc cur -> Map.add cur.Type cur acc) origLookup
+            |> Map.toList
+            |> List.map snd
+        saveEventHashesToFile hashLockFilePath originalWithNewEvents
+        Ok <| sprintf "%i Event hashes added the the original %i. New total of %i" (List.length newEvents) (List.length originalEventHashes) (List.length originalWithNewEvents)
+    | mutatedEvents, _ -> Error <| sprintf "Cannot update event hashes. Events have been mutated:\n"
 
 // test examples
-// let hashed1 = [
-//     { Type = "OrderPlaced"
-//       Hash = "FDC0ECD2A178BE2FF1C8EB59236E8092E6951905765362C19DFA07F600D44A6E" }
-//     { Type = "OrderDispatched"
-//       Hash = "19696012208AB309DB17DAA520C6811C5332DE84495BEA041964F7BA59181B14" }
-//   ]
-// //same
-// hashed1 |> compareEventHash hashed1
-
-// //changed
-// [
-//     { Type = "OrderPlaced"
-//       Hash = "CHANGED1" }
-//     { Type = "OrderDispatched"
-//       Hash = "19696012208AB309DB17DAA520C6811C5332DE84495BEA041964F7BA59181B14" }
-// ]
-// |> compareEventHash hashed1
-
-// //new
-// [
-//     { Type = "OrderPlaced"
-//       Hash = "FDC0ECD2A178BE2FF1C8EB59236E8092E6951905765362C19DFA07F600D44A6E" }
-//     { Type = "OrderDispatched"
-//       Hash = "19696012208AB309DB17DAA520C6811C5332DE84495BEA041964F7BA59181B14" }
-//     { Type = "NewThingHappened"
-//       Hash = "NEW1" }
-// ]
-// |> compareEventHash hashed1
-
-// //deleted
-// [
-//     { Type = "OrderPlaced"
-//       Hash = "FDC0ECD2A178BE2FF1C8EB59236E8092E6951905765362C19DFA07F600D44A6E" }
-// ]
-// |> compareEventHash hashed1
-// |> checkEventHashesForDifferences
-
-// // everythign should differ - 1 new, 2 deleted
-// typeToEventHash id typeof<string>
-// |> compareEventHash hashed1
-// |> checkEventHashesForDifferences
-
-// typeToEventHash id typeof<EventHash>
-
 // file reading & comparison
 // let origEvents = 
 //     readEventHashesFromFile EventLockFileName 
 //     |> function
 //         | Some(hashes) -> hashes
 //         | None -> failwithf "No event lock file found at %s\n" EventLockFileName
-
 // let currentEvents = getEventHashesForAssembly hashSha EventLockFileName
+// let compared = compareEventHash origEvents currentEvents
+//compared |> checkEventHashesForDifferences
 
-// compareEventHash origEvents currentEvents
-// |> checkEventHashesForDifferences
+// add new events to file if valid to do so
+// compared |> addNewHashes EventLockFileName origEvents
