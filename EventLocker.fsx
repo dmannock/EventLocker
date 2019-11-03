@@ -1,7 +1,32 @@
 open System
 
-open Microsoft.FSharp.Reflection
 open System.Reflection
+let matchingTypesInAssembly (predicate: Type -> bool) (asm: Assembly) =
+    let filter = Array.filter (fun (t: Type) -> (isNull t |> not) && t.Assembly = asm && predicate t)
+    try
+        asm.GetTypes() |> filter
+    with
+        | :? ReflectionTypeLoadException as ex -> ex.Types |> filter
+
+let getAllTypes asm = asm |> matchingTypesInAssembly (fun _ -> true)
+let getMarkerType (marker: string) allTypes = allTypes |> Array.tryFind (fun (t: Type) -> t.FullName.EndsWith(marker))
+
+let getMarkerTypeFromAssembly assemblyPath = 
+    // let assemblyTypes = assemblyPath |> Assembly.LoadFile |> getAllTypes
+    let assemblyTypes = getAllTypes (Assembly.GetExecutingAssembly())
+    match getMarkerType "IEvent" assemblyTypes with
+    | Some(t) -> t
+    | None -> failwith "Unable to find marker type 'IEvent'"
+
+// test loading assembly
+// type IEvent = interface end
+// type AnEvent = {
+//     Data: string
+// }
+// with interface IEvent
+// getMarkerTypeFromAssembly()
+
+open Microsoft.FSharp.Reflection
 // Taken from https://github.com/dmannock/FSharpUnionHelpers
 let getUnionCaseRecord (uc: UnionCaseInfo) = uc.GetFields() |> Array.tryHead |> Option.map (fun i -> i.PropertyType)
 // curently only cares about classes / records / unions top-level public signature
