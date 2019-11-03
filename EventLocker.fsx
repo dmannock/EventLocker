@@ -120,20 +120,33 @@ let hashSha (text: string) =
         use sha = new Security.Cryptography.SHA256Managed()
         (System.Text.Encoding.UTF8.GetBytes text |> sha.ComputeHash |> BitConverter.ToString).Replace("-", String.Empty)
 
-let checkEventHashesForDifferences eventComparisons =
-    eventComparisons
-    |> List.choose (
+let checkEventHashesForDifferences =
+    List.choose (
         function 
         | SameEventSignature(_) -> None
         | NewEventSignature(newEvent) -> Some (sprintf "New Event: %A" newEvent)
         | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event: %A" deletedEvent)
         | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
     )
-    |> function
+    >> function
     | [] -> Ok ()
     | errors -> Error errors
 
-let addNewHashes hashLockFilePath originalEventHashes eventComparisons =
+let runBuildHashComparison assemblyPath hashLockFilePath =
+    let originalEventHashes = 
+        match readEventHashesFromFile hashLockFilePath with
+        | Some(hashes) -> hashes
+        | None -> failwithf "No event lock file found at %s\nTo start using event locking generate the initial lock by runing with the '--addnew' argument." hashLockFilePath
+    getEventHashesForAssembly hashSha assemblyPath
+    |> compareEventHash originalEventHashes    
+    |> checkEventHashesForDifferences
+    |> Result.map (fun _ -> sprintf "Event checks complete. %i Events have not been mutated" (List.length originalEventHashes))
+    |> Result.mapError (fun errors -> sprintf "Errors in event checks:\n%s" (String.Join("\n", errors)))
+
+let runAddNewHashes assemblyPath hashLockFilePath =
+    let originalEventHashes = readEventHashesFromFile hashLockFilePath |> Option.defaultValue List.Empty
+    let currentEventHashes = getEventHashesForAssembly hashSha assemblyPath
+    let eventComparisons = compareEventHash originalEventHashes currentEventHashes
     let mutatedEvents = eventComparisons |> List.choose (function 
             | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
             | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event %A" deletedEvent)
@@ -154,20 +167,43 @@ let addNewHashes hashLockFilePath originalEventHashes eventComparisons =
         Ok <| sprintf "%i Event hashes added the the original %i. New total of %i" (List.length newEvents) (List.length originalEventHashes) (List.length originalWithNewEvents)
     | mutatedEvents, _ -> Error <| sprintf "Cannot update event hashes. Events have been mutated:\n%s" (String.Join("\n", mutatedEvents))
 
-// test examples
-// file reading & comparison
-// let origEvents = 
-//     readEventHashesFromFile EventLockFileName 
-//     |> function
-//         | Some(hashes) -> hashes
-//         | None -> failwithf "No event lock file found at %s\n" EventLockFileName
-// let currentEvents = getEventHashesForAssembly hashSha EventLockFileName
-// let compared = compareEventHash origEvents currentEvents
+// command line running
+type RunMode = CompareEvents | ForceEventUpdates
+type CommandLineOptions = {
+    AssemblyPath: string
+    HashLockFilePath: string
+    RunMode: RunMode
+}
+let parseArgs() =
+    match fsi.CommandLineArgs |> Array.skip 1 |> List.ofArray with
+    | assemblyPath::hashLockFilePath::"--addnew"::_ -> {
+            AssemblyPath = assemblyPath
+            HashLockFilePath = IO.Path.Combine(hashLockFilePath, EventLockFileName)
+            RunMode = ForceEventUpdates
+        }
+    | assemblyPath::hashLockFilePath::_ -> {
+            AssemblyPath = assemblyPath
+            HashLockFilePath = IO.Path.Combine(hashLockFilePath, EventLockFileName)
+            RunMode = CompareEvents
+        }
+    | _ -> failwith """Assemply path must be passed as the first argument. HashLockFilePath as the second.
+                    To generate initial event locks or add new events run with the '--addnew' argument."""
 
-// compared 
-// |> checkEventHashesForDifferences
-// |> Result.map (fun _ -> sprintf "Event checks complete. %i Events have not been mutated" (List.length origEvents))
-// |> Result.mapError (fun errors -> sprintf "Errors in event checks:\n%s" (String.Join("\n", errors)))
+let run commandLineOptions =
+    printfn "\n##########################################################################\n"
+    printfn "Running event locker with options:\n %A" commandLineOptions
+    match commandLineOptions with
+    | { RunMode = ForceEventUpdates } as cmd -> runAddNewHashes cmd.AssemblyPath cmd.HashLockFilePath
+    | { RunMode = CompareEvents } as cmd-> runBuildHashComparison cmd.AssemblyPath cmd.HashLockFilePath
 
-// add new events to file if valid to do so
-// compared |> addNewHashes EventLockFileName origEvents
+let printResult res = 
+    printfn "\n##########################################################################\n"
+    match res with
+    | Ok(msg) -> printfn "✔️ %s" msg
+    | Error(msg) -> 
+        printfn "❌ %s" msg
+        exit 1
+// entry point
+parseArgs()
+|> run
+|> printResult
