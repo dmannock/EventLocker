@@ -163,7 +163,11 @@ let addNewHashes hashLockFilePath originalEventHashes eventComparisons =
 //         | None -> failwithf "No event lock file found at %s\n" EventLockFileName
 // let currentEvents = getEventHashesForAssembly hashSha EventLockFileName
 // let compared = compareEventHash origEvents currentEvents
-//compared |> checkEventHashesForDifferences
+
+// compared 
+// |> checkEventHashesForDifferences
+// |> Result.map (fun _ -> sprintf "Event checks complete. %i Events have not been mutated" (List.length origEvents))
+// |> Result.mapError (fun errors -> sprintf "Errors in event checks:\n%s" (String.Join("\n", errors)))
 
 // add new events to file if valid to do so
 // compared |> addNewHashes EventLockFileName origEvents
