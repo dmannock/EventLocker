@@ -13,23 +13,15 @@ let matchingTypesInAssembly (predicate: Type -> bool) (asm: Assembly) =
 let getAllTypes asm = asm |> matchingTypesInAssembly (fun _ -> true)
 let getMarkerType (marker: string) allTypes = allTypes |> Array.tryFind (fun (t: Type) -> t.FullName.EndsWith(marker))
 
-let getMarkerTypeFromAssembly assemblyPath = 
-    // let assemblyTypes = assemblyPath |> Assembly.LoadFile |> getAllTypes
-    let assemblyTypes = getAllTypes (Assembly.GetExecutingAssembly())
+let loadAssemblyTypes assemblyPath = assemblyPath |> Assembly.LoadFile |> getAllTypes
+
+let getMarkerTypeFromAssembly assemblyTypes = 
     match getMarkerType "IEvent" assemblyTypes with
     | Some(t) -> t
     | None -> failwith "Unable to find marker type 'IEvent'"
 
 let getTypesUsingMarker (markerType: Type) =
     Array.filter (fun t -> markerType.IsAssignableFrom(t) && markerType <> t)
-
-// test loading assembly
-// type IEvent = interface end
-// type AnEvent = {
-//     Data: string
-// }
-// with interface IEvent
-// getMarkerTypeFromAssembly()
 
 open Microsoft.FSharp.Reflection
 // Taken from https://github.com/dmannock/FSharpUnionHelpers
@@ -71,6 +63,14 @@ let typeToEventHash (hashFn: string -> string) (t: Type) =
         |> hashFn
     createEventHash t.Name (hashType  t)
     |> List.singleton 
+
+let getEventHashesForAssembly hashFn assemblyPath =
+    let assemblyTypes = loadAssemblyTypes assemblyPath
+    let markerType = getMarkerTypeFromAssembly assemblyTypes
+    let typesForMarker = getTypesUsingMarker markerType assemblyTypes
+    typesForMarker
+    |> List.ofArray
+    |> List.collect (typeToEventHash hashFn)
 
 //event hash lock file comparison
 type EventComparison =
@@ -127,6 +127,13 @@ let saveEventHashesToFile file eventHashes =
     let lines = eventHashes |> Seq.map (fun { Type = t; Hash = hash} -> sprintf "%s,%s" t hash)
     IO.File.WriteAllLines(file, lines)
 
+let hashSha (text: string) =
+    if String.IsNullOrEmpty text then String.Empty
+    else
+        use sha = new Security.Cryptography.SHA256Managed()
+        (System.Text.Encoding.UTF8.GetBytes text |> sha.ComputeHash |> BitConverter.ToString).Replace("-", String.Empty)
+
+
 // test examples
 // let hashed1 = [
 //     { Type = "OrderPlaced"
@@ -172,7 +179,14 @@ let saveEventHashesToFile file eventHashes =
 
 // typeToEventHash id typeof<EventHash>
 
-// file reading
-// readEventHashesFromFile EventLockFileName 
-// |> Option.map (compareEventHash hashed1)
-// |> Option.map checkEventHashesForDifferences
+// file reading & comparison
+// let origEvents = 
+//     readEventHashesFromFile EventLockFileName 
+//     |> function
+//         | Some(hashes) -> hashes
+//         | None -> failwithf "No event lock file found at %s\n" EventLockFileName
+
+// let currentEvents = getEventHashesForAssembly hashSha EventLockFileName
+
+// compareEventHash origEvents currentEvents
+// |> checkEventHashesForDifferences
