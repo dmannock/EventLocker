@@ -79,7 +79,7 @@ type EventComparison =
     | DeletedEventSignature of EventHash
     | EventSignatureChanged of Original: EventHash * Current: EventHash
 
-let eventListToMap list = list |> List.map (fun x -> x.Type, x) |> Map.ofList
+let eventListToMap = List.map (fun x -> x.Type, x) >> Map.ofList
 
 let compareEventHash originalHashLock currentHashes =
     let origEventsMap = originalHashLock |> eventListToMap
@@ -145,8 +145,9 @@ let runBuildHashComparison assemblyPath hashLockFilePath =
 
 let runAddNewHashes assemblyPath hashLockFilePath =
     let originalEventHashes = readEventHashesFromFile hashLockFilePath |> Option.defaultValue List.Empty
-    let currentEventHashes = getEventHashesForAssembly hashSha assemblyPath
-    let eventComparisons = compareEventHash originalEventHashes currentEventHashes
+    let eventComparisons = 
+        getEventHashesForAssembly hashSha assemblyPath
+        |> compareEventHash originalEventHashes
     let mutatedEvents = eventComparisons |> List.choose (function 
             | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
             | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event %A" deletedEvent)
