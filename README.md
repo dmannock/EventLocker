@@ -1,4 +1,5 @@
 # Event Locker (POC)
+Still a work in progress - Not ready for consumption yet. see todos below.
 ### Idea
 Script to run on any dotnet environment that will check types (i.e. Events when EventSourcing) and ensure they have not been mutated since they were added (marked immutable).
 
@@ -27,3 +28,6 @@ An example of failing the build by adding the below snipped to a project file.
   <Exec Command="dotnet fsi EventLocker.fsx $(TargetPath) $(ProjectDir)" />
 </Target>
 ```
+
+## Todos
+These is an issue with public signatures form the dependency on FSharpUnionHelpers. Not supporting nested types works, however theres no point enforsing hashes if they will be obsolete and have to be byassed.

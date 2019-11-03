@@ -26,10 +26,13 @@ let getTypesUsingMarker (markerType: Type) = Array.filter (fun t -> markerType.I
 open Microsoft.FSharp.Reflection
 // Taken from https://github.com/dmannock/FSharpUnionHelpers
 type PublicTypeSignature =
-| SimpleTypeSig of TypeName: string
-| ClassTypeSig of TypeName: string * Fields: Fields list
-| RecordTypeSig of TypeName: string * Fields: Fields list
-| UnionTypeSig of TypeName: string * Unions: Fields list
+    | SimpleTypeSig of TypeName: string
+    | ClassTypeSig of TypeName: string * Fields: Fields list
+    | RecordTypeSig of TypeName: string * Fields: Fields list
+    | UnionTypeSig of TypeName: string * Unions: Fields list
+    // | TupleTypeSig of Fields: Fields list
+    // | EnumTypeSig of TypeName: string * Fields: string list
+    | UnsupportedTypeSig of Type
 and Fields = {
     Identifier: string
     TypeSignature: PublicTypeSignature
@@ -40,21 +43,26 @@ let rec getTypesPublicSignature (t: Type) =
         Seq.map (fun (pi: PropertyInfo) -> {
             Identifier = pi.Name
             TypeSignature = getTypesPublicSignature pi.PropertyType
-        }) >> List.ofSeq
+        })
+        >> List.ofSeq
     if t.IsPrimitive then SimpleTypeSig(t.Name)
     else if t = typeof<String> then SimpleTypeSig(t.Name)
+    else if t = typeof<DateTime> then SimpleTypeSig(t.Name)
     else if FSharpType.IsRecord t then 
         let fields = FSharpType.GetRecordFields t |> propertiesToPublicSignature
         RecordTypeSig(t.Name, fields) 
     else if FSharpType.IsUnion t then 
-        let ucInfo (uc: UnionCaseInfo) = uc.GetFields() |> propertiesToPublicSignature
+        let ucInfo (uc: UnionCaseInfo) = uc.GetFields() |> Seq.map (fun i -> {
+            Identifier = uc.Name
+            TypeSignature = getTypesPublicSignature i.PropertyType
+        })
         let unions = 
             FSharpType.GetUnionCases(t)
             |> Seq.map (ucInfo)
             |> Seq.collect id
             |> List.ofSeq
         UnionTypeSig(t.Name, unions)                        
-    else 
+    else if t.IsClass then
         let properties = t.GetProperties(bindingFlags) |> propertiesToPublicSignature
         let fields = 
             t.GetFields(bindingFlags)
@@ -64,6 +72,8 @@ let rec getTypesPublicSignature (t: Type) =
             })
             |> List.ofSeq
         ClassTypeSig(t.Name, properties@fields)  
+    else
+        UnsupportedTypeSig(t)        
 let rec toSignatureString signature =
     let fieldToString { Identifier = ident; TypeSignature = typeSig } = sprintf "%s:%s" ident (toSignatureString typeSig)
     match signature with
@@ -71,6 +81,7 @@ let rec toSignatureString signature =
     | ClassTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join(";", fields |> List.map fieldToString))
     | RecordTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join(";", fields |> List.map fieldToString))                     
     | UnionTypeSig(typeName, unions) -> sprintf "%s=%s" typeName (String.Join(";", unions |> List.map (fieldToString >> sprintf "|%s")))
+    | UnsupportedTypeSig(t) -> failwithf "UNSUPPORTED TYPE SIGNATURE: %A" t
 //end of borrowed FSharpUnionHelpers code
 
 type EventHash =  {
