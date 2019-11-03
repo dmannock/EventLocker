@@ -11,6 +11,7 @@ let matchingTypesInAssembly (predicate: Type -> bool) (asm: Assembly) =
         | :? ReflectionTypeLoadException as ex -> ex.Types |> filter
 
 let getAllTypes asm = asm |> matchingTypesInAssembly (fun _ -> true)
+
 let getMarkerType (marker: string) allTypes = allTypes |> Array.tryFind (fun (t: Type) -> t.FullName.EndsWith(marker))
 
 let loadAssemblyTypes assemblyPath = assemblyPath |> Assembly.LoadFile |> getAllTypes
@@ -20,8 +21,7 @@ let getMarkerTypeFromAssembly assemblyTypes =
     | Some(t) -> t
     | None -> failwith "Unable to find marker type 'IEvent'"
 
-let getTypesUsingMarker (markerType: Type) =
-    Array.filter (fun t -> markerType.IsAssignableFrom(t) && markerType <> t)
+let getTypesUsingMarker (markerType: Type) = Array.filter (fun t -> markerType.IsAssignableFrom(t) && markerType <> t)
 
 open Microsoft.FSharp.Reflection
 // Taken from https://github.com/dmannock/FSharpUnionHelpers
@@ -67,10 +67,10 @@ let typeToEventHash (hashFn: string -> string) (t: Type) =
 let getEventHashesForAssembly hashFn assemblyPath =
     let assemblyTypes = loadAssemblyTypes assemblyPath
     let markerType = getMarkerTypeFromAssembly assemblyTypes
-    let typesForMarker = getTypesUsingMarker markerType assemblyTypes
-    typesForMarker
+    getTypesUsingMarker markerType assemblyTypes
     |> List.ofArray
     |> List.collect (typeToEventHash hashFn)
+    |> List.distinct
 
 //event hash lock file comparison
 type EventComparison =
@@ -135,14 +135,14 @@ let checkEventHashesForDifferences eventComparisons =
 
 let addNewHashes hashLockFilePath originalEventHashes eventComparisons =
     let mutatedEvents = eventComparisons |> List.choose (function 
-            | EventSignatureChanged(orig, changed) -> Some()
-            | DeletedEventSignature(deletedEvent) -> Some()
+            | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
+            | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event %A" deletedEvent)
             | _ -> None)
     let newEvents = eventComparisons |> List.choose (function 
             | NewEventSignature(event) -> Some event
             | _ -> None)
     match mutatedEvents, newEvents with
-    | [], [] -> Ok <| sprintf "No new events to add."
+    | [], [] -> Ok <| sprintf "No new events to add to the existing %i events." (List.length originalEventHashes)
     | [], newEvents ->
         let origLookup = originalEventHashes |> eventListToMap
         let originalWithNewEvents = 
@@ -152,7 +152,7 @@ let addNewHashes hashLockFilePath originalEventHashes eventComparisons =
             |> List.map snd
         saveEventHashesToFile hashLockFilePath originalWithNewEvents
         Ok <| sprintf "%i Event hashes added the the original %i. New total of %i" (List.length newEvents) (List.length originalEventHashes) (List.length originalWithNewEvents)
-    | mutatedEvents, _ -> Error <| sprintf "Cannot update event hashes. Events have been mutated:\n"
+    | mutatedEvents, _ -> Error <| sprintf "Cannot update event hashes. Events have been mutated:\n%s" (String.Join("\n", mutatedEvents))
 
 // test examples
 // file reading & comparison
