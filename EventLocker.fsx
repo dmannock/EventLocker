@@ -25,28 +25,53 @@ let getTypesUsingMarker (markerType: Type) = Array.filter (fun t -> markerType.I
 
 open Microsoft.FSharp.Reflection
 // Taken from https://github.com/dmannock/FSharpUnionHelpers
-let getUnionCaseRecord (uc: UnionCaseInfo) = uc.GetFields() |> Array.tryHead |> Option.map (fun i -> i.PropertyType)
-// curently only cares about classes / records / unions top-level public signature
+type PublicTypeSignature =
+| SimpleTypeSig of TypeName: string
+| ClassTypeSig of TypeName: string * Fields: Fields list
+| RecordTypeSig of TypeName: string * Fields: Fields list
+| UnionTypeSig of TypeName: string * Unions: Fields list
+and Fields = {
+    Identifier: string
+    TypeSignature: PublicTypeSignature
+}
 let rec getTypesPublicSignature (t: Type) = 
     let bindingFlags = BindingFlags.Public ||| BindingFlags.Instance
-    let getRecordFields t = FSharpType.GetRecordFields t |> Seq.map (fun x -> x.Name, x.PropertyType.Name)
-    if t.IsPrimitive then Seq.singleton (t.Name, t.Name)
-    else if t = typeof<String> then Seq.singleton (t.Name, t.Name)
-    else if FSharpType.IsRecord t then getRecordFields t
+    let propertiesToPublicSignature = 
+        Seq.map (fun (pi: PropertyInfo) -> {
+            Identifier = pi.Name
+            TypeSignature = getTypesPublicSignature pi.PropertyType
+        }) >> List.ofSeq
+    if t.IsPrimitive then SimpleTypeSig(t.Name)
+    else if t = typeof<String> then SimpleTypeSig(t.Name)
+    else if FSharpType.IsRecord t then 
+        let fields = FSharpType.GetRecordFields t |> propertiesToPublicSignature
+        RecordTypeSig(t.Name, fields) 
     else if FSharpType.IsUnion t then 
-        FSharpType.GetUnionCases(t)
-        |> Seq.choose (getUnionCaseRecord >> Option.map getTypesPublicSignature)
-        |> Seq.collect id               
+        let ucInfo (uc: UnionCaseInfo) = uc.GetFields() |> propertiesToPublicSignature
+        let unions = 
+            FSharpType.GetUnionCases(t)
+            |> Seq.map (ucInfo)
+            |> Seq.collect id
+            |> List.ofSeq
+        UnionTypeSig(t.Name, unions)                        
     else 
-        seq { 
-            yield! t.GetProperties(bindingFlags) |> Seq.map (fun x -> x.Name, x.PropertyType.Name)
-            yield! t.GetFields(bindingFlags) |> Seq.map (fun x -> x.Name, x.FieldType.Name)
-        }
-    |> Seq.sortBy fst
-
-let toSignatureString typeName signature =
-    let fieldString = signature |> Seq.map (fun (name, t) -> sprintf "%s:%s" name t)
-    typeName + "=" + String.Join("#", fieldString) 
+        let properties = t.GetProperties(bindingFlags) |> propertiesToPublicSignature
+        let fields = 
+            t.GetFields(bindingFlags)
+            |> Seq.map (fun fi -> {
+                Identifier = fi.Name
+                TypeSignature = getTypesPublicSignature fi.FieldType
+            })
+            |> List.ofSeq
+        ClassTypeSig(t.Name, properties@fields)  
+let rec toSignatureString signature =
+    let fieldToString { Identifier = ident; TypeSignature = typeSig } = sprintf "%s:%s" ident (toSignatureString typeSig)
+    match signature with
+    | SimpleTypeSig(typeName) -> typeName
+    | ClassTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join(";", fields |> List.map fieldToString))
+    | RecordTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join(";", fields |> List.map fieldToString))                     
+    | UnionTypeSig(typeName, unions) -> sprintf "%s=%s" typeName (String.Join(";", unions |> List.map (fieldToString >> sprintf "|%s")))
+//end of borrowed FSharpUnionHelpers code
 
 type EventHash =  {
     Type: string 
@@ -59,7 +84,7 @@ let typeToEventHash (hashFn: string -> string) (t: Type) =
     let hashType theType =
         theType
         |> getTypesPublicSignature
-        |> toSignatureString theType.Name
+        |> toSignatureString
         |> hashFn
     createEventHash t.Name (hashType  t)
     |> List.singleton 
