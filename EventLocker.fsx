@@ -62,7 +62,7 @@ let rec getTypesPublicSignature (t: Type) =
             |> Seq.collect id
             |> List.ofSeq
         UnionTypeSig(t.Name, unions)                        
-    else if t.IsClass then
+    else
         let properties = t.GetProperties(bindingFlags) |> propertiesToPublicSignature
         let fields = 
             t.GetFields(bindingFlags)
@@ -72,8 +72,6 @@ let rec getTypesPublicSignature (t: Type) =
             })
             |> List.ofSeq
         ClassTypeSig(t.Name, properties@fields)  
-    else
-        UnsupportedTypeSig(t)        
 let rec toSignatureString signature =
     let fieldToString { Identifier = ident; TypeSignature = typeSig } = sprintf "%s:%s" ident (toSignatureString typeSig)
     match signature with

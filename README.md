@@ -30,4 +30,4 @@ An example of failing the build by adding the below snipped to a project file.
 ```
 
 ## Todos
-These is an issue with public signatures form the dependency on FSharpUnionHelpers. Not supporting nested types works, however theres no point enforsing hashes if they will be obsolete and have to be byassed.
+These is an issue with public signatures from the dependency on FSharpUnionHelpers. Not supporting nested types works, however theres no point enforcing hashes if they will be obsolete and have to be bypassed.
