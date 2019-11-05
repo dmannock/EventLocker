@@ -62,7 +62,7 @@ let rec getTypesPublicSignature (t: Type) =
             |> Seq.collect id
             |> List.ofSeq
         UnionTypeSig(t.Name, unions)                        
-    else
+    else if t.IsClass then
         let properties = t.GetProperties(bindingFlags) |> propertiesToPublicSignature
         let fields = 
             t.GetFields(bindingFlags)
@@ -72,6 +72,8 @@ let rec getTypesPublicSignature (t: Type) =
             })
             |> List.ofSeq
         ClassTypeSig(t.Name, properties@fields)  
+    else        
+        SimpleTypeSig(t.Name) 
 let rec toSignatureString signature =
     let fieldToString { Identifier = ident; TypeSignature = typeSig } = sprintf "%s:%s" ident (toSignatureString typeSig)
     match signature with
@@ -82,21 +84,30 @@ let rec toSignatureString signature =
     | UnsupportedTypeSig(t) -> failwithf "UNSUPPORTED TYPE SIGNATURE: %A" t
 //end of borrowed FSharpUnionHelpers code
 
+let groupUnionCaseEvents =
+    function
+    // filter out Unions where the union type & case type implement the marker type
+    | UnionTypeSig(typeName, unions) as evt -> 
+        match unions |> List.tryFind (fun u -> u.Identifier = typeName) with
+        | Some(_) -> List.empty
+        | None -> 
+            unions |> List.map (fun uc -> Some(uc.Identifier), UnionTypeSig(uc.Identifier, List.singleton uc))
+    | evt -> List.singleton (None, evt)
+
 type EventHash =  {
     Type: string 
     Hash: string 
 }
 let createEventHash t h = {Type = t; Hash = h}
 
-// placeholder fn signature for primitive types currently
 let typeToEventHash (hashFn: string -> string) (t: Type) =
-    let hashType theType =
-        theType
-        |> getTypesPublicSignature
-        |> toSignatureString
+    getTypesPublicSignature t
+    |> groupUnionCaseEvents
+    |> List.map (fun x ->
+        snd x
+        |> toSignatureString 
         |> hashFn
-    createEventHash t.Name (hashType  t)
-    |> List.singleton 
+        |> createEventHash (fst x |> Option.defaultValue t.Name))
 
 let getEventHashesForAssembly hashFn assemblyPath =
     let assemblyTypes = loadAssemblyTypes assemblyPath
