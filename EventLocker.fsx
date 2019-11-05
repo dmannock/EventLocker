@@ -25,62 +25,65 @@ let getTypesUsingMarker (markerType: Type) = Array.filter (fun t -> markerType.I
 
 open Microsoft.FSharp.Reflection
 // Taken from https://github.com/dmannock/FSharpUnionHelpers
-    type PublicTypeSignature =
-        | SimpleTypeSig of TypeName: string
-        | ClassTypeSig of TypeName: string * Fields: Fields list
-        | RecordTypeSig of TypeName: string * Fields: Fields list
-        | UnionTypeSig of TypeName: string * Unions: Fields list
-        | TupleTypeSig of Fields: PublicTypeSignature list
-        | EnumTypeSig of TypeName: string * FieldTypeName: string * Fields: string list
-    and Fields = {
-        Identifier: string
-        TypeSignature: PublicTypeSignature
-    }
-    let createTypeSigFields id tsig = { Identifier = id; TypeSignature = tsig }
+type PublicTypeSignature =
+    | SimpleTypeSig of TypeName: string
+    | ClassTypeSig of TypeName: string * Fields: Fields list
+    | RecordTypeSig of TypeName: string * Fields: Fields list
+    | UnionTypeSig of TypeName: string * Unions: Fields list
+    | TupleTypeSig of Fields: PublicTypeSignature list
+    | EnumTypeSig of TypeName: string * FieldTypeName: string * Fields: string list
+and Fields = {
+    Identifier: string
+    TypeSignature: PublicTypeSignature
+}
+let createTypeSigFields id tsig = { Identifier = id; TypeSignature = tsig }
 
-    let getUnionCases t = FSharpType.GetUnionCases(t, BindingFlags.NonPublic ||| BindingFlags.Public)
-    let isUnion t = FSharpType.IsUnion(t, BindingFlags.NonPublic ||| BindingFlags.Instance)
+let getUnionCases t = FSharpType.GetUnionCases(t, BindingFlags.NonPublic ||| BindingFlags.Public)
+let isUnion t = FSharpType.IsUnion(t, BindingFlags.NonPublic ||| BindingFlags.Instance)
 
-    let rec getTypesPublicSignature (t: Type) = 
-        let publicBindingFlags = BindingFlags.Public ||| BindingFlags.Instance
-        let propertiesToPublicSignature = 
-            Seq.map (fun (pi: PropertyInfo) -> createTypeSigFields pi.Name (getTypesPublicSignature pi.PropertyType))
-            >> List.ofSeq
-        if FSharpType.IsRecord t then 
-            RecordTypeSig(t.Name, (FSharpType.GetRecordFields t |> propertiesToPublicSignature)) 
-        else if FSharpType.IsTuple t then 
-            TupleTypeSig(FSharpType.GetTupleElements t |> Array.map getTypesPublicSignature |> List.ofArray)        
-        else if t.IsEnum then 
-            EnumTypeSig(t.Name, Enum.GetUnderlyingType(t).ToString(), Enum.GetNames(t) |> List.ofArray)        
-        else if isUnion t && not (typeof<Collections.IEnumerable>.IsAssignableFrom(t)) then 
-            let ucInfo (uc: UnionCaseInfo) = 
-                uc.GetFields() 
-                |> Seq.map (fun i -> createTypeSigFields uc.Name (getTypesPublicSignature i.PropertyType))
-            let unions = 
-                getUnionCases t
-                |> Seq.map (ucInfo)
-                |> Seq.collect id
-                |> List.ofSeq
-            UnionTypeSig(t.Name, unions) 
-        else if t.IsClass && t <> typeof<String> && not (typeof<Collections.IEnumerable>.IsAssignableFrom(t)) then
-            let properties = t.GetProperties(publicBindingFlags) |> propertiesToPublicSignature
-            let fields = 
-                t.GetFields(publicBindingFlags)
-                |> Seq.map (fun fi -> createTypeSigFields fi.Name (getTypesPublicSignature fi.FieldType))
-                |> List.ofSeq
-            ClassTypeSig(t.ToString(), properties@fields)  
-        else   
-            SimpleTypeSig(t.ToString())  
+let rec getTypesPublicSignature (t: Type) = 
+    let publicBindingFlags = BindingFlags.Public ||| BindingFlags.Instance
+    let propertiesToPublicSignature = 
+        Seq.map (fun (pi: PropertyInfo) -> createTypeSigFields pi.Name (getTypesPublicSignature pi.PropertyType))
+        >> Seq.sortBy (fun x -> x.Identifier)
+        >> List.ofSeq
+    if FSharpType.IsRecord t then 
+        RecordTypeSig(t.Name, (FSharpType.GetRecordFields t |> propertiesToPublicSignature)) 
+    else if FSharpType.IsTuple t then 
+        TupleTypeSig(FSharpType.GetTupleElements t |> Array.map getTypesPublicSignature |> List.ofArray)        
+    else if t.IsEnum then 
+        EnumTypeSig(t.Name, Enum.GetUnderlyingType(t).ToString(), Enum.GetNames(t) |> List.ofArray)        
+    else if isUnion t && not (typeof<Collections.IEnumerable>.IsAssignableFrom(t)) then 
+        let ucInfo (uc: UnionCaseInfo) = 
+            uc.GetFields() 
+            |> Seq.map (fun i -> createTypeSigFields uc.Name (getTypesPublicSignature i.PropertyType))
+        let unions = 
+            getUnionCases t
+            |> Seq.sortBy (fun uc -> uc.Name)
+            |> Seq.map (ucInfo)
+            |> Seq.collect id
+            |> List.ofSeq
+        UnionTypeSig(t.Name, unions) 
+    else if t.IsClass && t <> typeof<String> && not (typeof<Collections.IEnumerable>.IsAssignableFrom(t)) then
+        let properties = t.GetProperties(publicBindingFlags) |> propertiesToPublicSignature
+        let fields = 
+            t.GetFields(publicBindingFlags)
+            |> Seq.map (fun fi -> createTypeSigFields fi.Name (getTypesPublicSignature fi.FieldType))
+            |> Seq.sortBy (fun x -> x.Identifier)
+            |> List.ofSeq
+        ClassTypeSig(t.ToString(), properties@fields)  
+    else   
+        SimpleTypeSig(t.ToString())  
 
-    let rec toSignatureString signature =
-        let fieldToString { Identifier = ident; TypeSignature = typeSig } = sprintf "%s:%s" ident (toSignatureString typeSig)
-        match signature with
-        | SimpleTypeSig(typeName) -> typeName
-        | ClassTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join("#", fields |> List.map fieldToString))
-        | RecordTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join(";", fields |> List.map fieldToString))                     
-        | UnionTypeSig(typeName, unions) -> sprintf "%s=%s" typeName (String.Join("", unions |> List.map (fieldToString >> sprintf "|%s")))
-        | TupleTypeSig(fields) -> sprintf "(%s)" (String.Join(",", fields |> List.map toSignatureString))
-        | EnumTypeSig(typeName, fieldTypeName, fields) -> sprintf "%s:%s={%s}" typeName fieldTypeName (String.Join(",", fields))  
+let rec toSignatureString signature =
+    let fieldToString { Identifier = ident; TypeSignature = typeSig } = sprintf "%s:%s" ident (toSignatureString typeSig)
+    match signature with
+    | SimpleTypeSig(typeName) -> typeName
+    | ClassTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join("#", fields |> List.map fieldToString))
+    | RecordTypeSig(typeName, fields) -> sprintf "%s={%s}" typeName (String.Join(";", fields |> List.map fieldToString))                     
+    | UnionTypeSig(typeName, unions) -> sprintf "%s=%s" typeName (String.Join("", unions |> List.map (fieldToString >> sprintf "|%s")))
+    | TupleTypeSig(fields) -> sprintf "(%s)" (String.Join(",", fields |> List.map toSignatureString))
+    | EnumTypeSig(typeName, fieldTypeName, fields) -> sprintf "%s:%s={%s}" typeName fieldTypeName (String.Join(",", fields))  
 //end of borrowed FSharpUnionHelpers code
 
 let groupUnionCaseEvents =
