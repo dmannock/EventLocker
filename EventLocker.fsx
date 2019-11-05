@@ -40,7 +40,7 @@ open Microsoft.FSharp.Reflection
 
     let getUnionCases t = FSharpType.GetUnionCases(t, BindingFlags.NonPublic ||| BindingFlags.Public)
     let isUnion t = FSharpType.IsUnion(t, BindingFlags.NonPublic ||| BindingFlags.Instance)
-    
+
     let rec getTypesPublicSignature (t: Type) = 
         let publicBindingFlags = BindingFlags.Public ||| BindingFlags.Instance
         let propertiesToPublicSignature = 
@@ -176,11 +176,14 @@ let checkEventHashesForDifferences =
     | [] -> Ok ()
     | errors -> Error errors
 
+let noFileFoundMessage = sprintf """No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:
+dotnet fsi EventLocker.fsx "%s" "%s" --addnew
+"""
 let runBuildHashComparison assemblyPath hashLockFilePath =
     let originalEventHashes = 
         match readEventHashesFromFile hashLockFilePath with
         | Some(hashes) -> hashes
-        | None -> failwithf "No event lock file found at %s\nTo start using event locking generate the initial lock by runing with the '--addnew' argument." hashLockFilePath
+        | None -> failwith (noFileFoundMessage assemblyPath hashLockFilePath)
     getEventHashesForAssembly hashSha assemblyPath
     |> compareEventHash originalEventHashes    
     |> checkEventHashesForDifferences

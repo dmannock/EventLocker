@@ -29,29 +29,22 @@ with interface IEvent
 ### 2. Add the script to your repository
 
 ### 3. Configure the script to run after each build
-Copy the below snipped in to the project files that contains your events:
+Copy the below snipped in to the project files that contains your events replacing the ```PathToEventLockerScriptHere``` with the location from step 2.
 ```xml
 <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-  <Exec Command="dotnet fsi EventLocker.fsx $(TargetPath) $(ProjectDir)" />
+  <Exec Command="dotnet fsi <PathToEventLockerScriptHere> $(TargetPath) $(ProjectDir)" />
 </Target>
 ```
 Alternatively add to you build script / process of choice.
 
 Building the project / solution should now fail the build with:
 ```
-##########################################################################
-
-Running event locker with options:
-{ AssemblyPath = <YourAssemblyPathHere>
-HashLockFilePath = Yo<urHashLockFilePathHere>
-RunMode = CompareEvents }
-
-No event lock file found at <YourHashLockFilePathHere>
-To start using event locking generate the initial lock by runing with the '--addnew' argument.
+No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:
+dotnet fsi EventLocker.fsx <AssemblyPath> <HashLockFilePath> --addnew
 ```
 ### 4. Generate the initial lock file
 
-Use the paths provided above to call the script with the ```--addnew``` argument
+Use the last line provided to call the script (with the ```--addnew``` argument)
 ```cmd
 EventLocker.fsx <AssemblyPath> <HashLockFilePath> [--addnew]
 ```
