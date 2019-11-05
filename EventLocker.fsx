@@ -167,34 +167,40 @@ let hashSha (text: string) =
         use sha = new Security.Cryptography.SHA256Managed()
         (System.Text.Encoding.UTF8.GetBytes text |> sha.ComputeHash |> BitConverter.ToString).Replace("-", String.Empty)
 
-let checkEventHashesForDifferences =
-    List.choose (
+let checkEventHashesForDifferences eventComparisons =
+    eventComparisons 
+    |> List.choose (
         function 
         | SameEventSignature(_) -> None
         | NewEventSignature(newEvent) -> Some (sprintf "New Event: %A" newEvent)
         | DeletedEventSignature(deletedEvent) -> Some (sprintf "Deleted Event: %A" deletedEvent)
         | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
     )
-    >> function
-    | [] -> Ok ()
+    |> function
+    | [] -> Ok eventComparisons
     | errors -> Error errors
 
-let noFileFoundMessage = sprintf """No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:
-dotnet fsi EventLocker.fsx "%s" "%s" --addnew
-"""
+let noFileFoundMessage = sprintf "No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:\n\n\
+dotnet fsi EventLocker.fsx \"%s\" \"%s\" --addnew\n"
 let runBuildHashComparison assemblyPath hashLockFilePath =
     let originalEventHashes = 
-        match readEventHashesFromFile hashLockFilePath with
-        | Some(hashes) -> hashes
-        | None -> failwith (noFileFoundMessage assemblyPath hashLockFilePath)
-    getEventHashesForAssembly hashSha assemblyPath
-    |> compareEventHash originalEventHashes    
-    |> checkEventHashesForDifferences
-    |> Result.map (fun _ -> sprintf "Event checks complete. %i Events have not been mutated" (List.length originalEventHashes))
+        match IO.Path.Combine(hashLockFilePath, EventLockFileName) |> readEventHashesFromFile with
+        | Some(hashes) -> Ok hashes
+        | None -> Error [(noFileFoundMessage assemblyPath hashLockFilePath)]
+    originalEventHashes
+    |> Result.map (fun orig -> 
+        let currentEventHashes = getEventHashesForAssembly hashSha assemblyPath
+        compareEventHash orig currentEventHashes
+    )
+    |> Result.bind checkEventHashesForDifferences
+    |> Result.map (fun eventComparisons -> sprintf "Event checks complete. %i Events have not been mutated" (List.length eventComparisons))
     |> Result.mapError (fun errors -> sprintf "Errors in event checks:\n%s" (String.Join("\n", errors)))
 
 let runAddNewHashes assemblyPath hashLockFilePath =
-    let originalEventHashes = readEventHashesFromFile hashLockFilePath |> Option.defaultValue List.Empty
+    let originalEventHashes = 
+        IO.Path.Combine(hashLockFilePath, EventLockFileName) 
+        |> readEventHashesFromFile 
+        |> Option.defaultValue List.Empty
     let eventComparisons = 
         getEventHashesForAssembly hashSha assemblyPath
         |> compareEventHash originalEventHashes
@@ -229,12 +235,12 @@ let parseArgs() =
     match fsi.CommandLineArgs |> Array.skip 1 |> List.ofArray with
     | assemblyPath::hashLockFilePath::"--addnew"::_ -> {
             AssemblyPath = assemblyPath
-            HashLockFilePath = IO.Path.Combine(hashLockFilePath, EventLockFileName)
+            HashLockFilePath = hashLockFilePath
             RunMode = ForceEventUpdates
         }
     | assemblyPath::hashLockFilePath::_ -> {
             AssemblyPath = assemblyPath
-            HashLockFilePath = IO.Path.Combine(hashLockFilePath, EventLockFileName)
+            HashLockFilePath = hashLockFilePath
             RunMode = CompareEvents
         }
     | _ -> failwith """Assemply path must be passed as the first argument. HashLockFilePath as the second.
