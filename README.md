@@ -1,10 +1,10 @@
-# Event Locker (POC)
-Script to run on any dotnet environment that will check types (i.e. Events when EventSourcing) and ensure they have not been mutated since they were added (marked immutable).
+# Event Locker
+Script that ensures types have not been mutated (i.e. Events when EventSourcing) since they were added (marked immutable).
 
 Currently the events are marked by inheriting from a marker type called 'IEvent'
 
+Runs on any dotnet environment that supports fsi.
 Compatible with: C#, F#
-
 
 ## Usage
 ### 1. Check your code
