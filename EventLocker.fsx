@@ -167,8 +167,8 @@ let hashSha (text: string) =
         use sha = new Security.Cryptography.SHA256Managed()
         (System.Text.Encoding.UTF8.GetBytes text |> sha.ComputeHash |> BitConverter.ToString).Replace("-", String.Empty)
 
-let runBuildHashComparison assemblyPath hashLockFilePath =
-    match IO.Path.Combine(hashLockFilePath, EventLockFileName) |> readEventHashesFromFile with
+let runBuildHashComparison assemblyPath hashLockFileLocation =
+    match IO.Path.Combine(hashLockFileLocation, EventLockFileName) |> readEventHashesFromFile with
     | Some(originalEventHashes) -> 
         getEventHashesForAssembly hashSha assemblyPath
         |> compareEventHash originalEventHashes
@@ -184,12 +184,11 @@ let runBuildHashComparison assemblyPath hashLockFilePath =
         | errors -> Error (sprintf "Errors in event checks:\n%s" (String.Join("\n", errors)))
     | None -> 
         Error (sprintf "No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:\n\
-            dotnet fsi EventLocker.fsx \"%s\" \"%s\" --addnew\n" assemblyPath hashLockFilePath)
+            dotnet fsi EventLocker.fsx \"%s\" \"%s\" --addnew\n" assemblyPath hashLockFileLocation)
 
 let runAddNewHashes assemblyPath hashLockFilePath =
     let originalEventHashes = 
-        IO.Path.Combine(hashLockFilePath, EventLockFileName) 
-        |> readEventHashesFromFile 
+        readEventHashesFromFile hashLockFilePath
         |> Option.defaultValue List.Empty
     let eventComparisons = 
         getEventHashesForAssembly hashSha assemblyPath
@@ -201,8 +200,11 @@ let runAddNewHashes assemblyPath hashLockFilePath =
     let newEvents = eventComparisons |> List.choose (function 
             | NewEventSignature(event) -> Some event
             | _ -> None)
+    let numOfOriginalEventHashes = List.length originalEventHashes  
+    printfn "mutatedEvents events: %A" mutatedEvents   
+    printfn "new events: %A" newEvents   
     match mutatedEvents, newEvents with
-    | [], [] -> Ok <| sprintf "No new events to add to the existing %i events." (List.length originalEventHashes)
+    | [], [] -> Ok <| sprintf "No new events to add to the existing %i events." numOfOriginalEventHashes
     | [], newEvents ->
         let origLookup = originalEventHashes |> eventListToMap
         let originalWithNewEvents = 
@@ -211,37 +213,38 @@ let runAddNewHashes assemblyPath hashLockFilePath =
             |> Map.toList
             |> List.map snd
         saveEventHashesToFile hashLockFilePath originalWithNewEvents
-        Ok <| sprintf "%i Event hashes added the the original %i. New total of %i" (List.length newEvents) (List.length originalEventHashes) (List.length originalWithNewEvents)
+        let numOfTotalEvents = List.length originalWithNewEvents
+        Ok <| sprintf "%i Event hashes added the the original %i. New total of %i" (numOfTotalEvents - numOfOriginalEventHashes) numOfOriginalEventHashes numOfTotalEvents
     | mutatedEvents, _ -> Error <| sprintf "Cannot update event hashes. Events have been mutated:\n%s" (String.Join("\n", mutatedEvents))
 
 // command line running
 type RunMode = CompareEvents | ForceEventUpdates
 type CommandLineOptions = {
     AssemblyPath: string
-    HashLockFilePath: string
+    HashLockFileLocation: string
     RunMode: RunMode
 }
 let parseArgs() =
     match fsi.CommandLineArgs |> Array.skip 1 |> List.ofArray with
-    | assemblyPath::hashLockFilePath::"--addnew"::_ -> {
+    | assemblyPath::hashLockFileLocation::"--addnew"::_ -> {
             AssemblyPath = assemblyPath
-            HashLockFilePath = hashLockFilePath
+            HashLockFileLocation = hashLockFileLocation
             RunMode = ForceEventUpdates
         }
-    | assemblyPath::hashLockFilePath::_ -> {
+    | assemblyPath::hashLockFileLocation::_ -> {
             AssemblyPath = assemblyPath
-            HashLockFilePath = hashLockFilePath
+            HashLockFileLocation = hashLockFileLocation
             RunMode = CompareEvents
         }
-    | _ -> failwith """Assembly path must be passed as the first argument. HashLockFilePath as the second.
+    | _ -> failwith """Assembly path must be passed as the first argument. HashLockFileLocation as the second.
                     To generate initial event locks or add new events run with the '--addnew' argument."""
 
 let run commandLineOptions =
     printfn "\n##########################################################################\n"
     printfn "Running event locker with options:\n %A" commandLineOptions
     match commandLineOptions with
-    | { RunMode = ForceEventUpdates } as cmd -> runAddNewHashes cmd.AssemblyPath cmd.HashLockFilePath
-    | { RunMode = CompareEvents } as cmd-> runBuildHashComparison cmd.AssemblyPath cmd.HashLockFilePath
+    | { RunMode = ForceEventUpdates } as cmd -> runAddNewHashes cmd.AssemblyPath (IO.Path.Combine(cmd.HashLockFileLocation, EventLockFileName))
+    | { RunMode = CompareEvents } as cmd-> runBuildHashComparison cmd.AssemblyPath cmd.HashLockFileLocation
 
 let printResult res = 
     printfn "\n##########################################################################\n"
