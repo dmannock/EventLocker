@@ -1,14 +1,13 @@
 # Event Locker
-Script that ensures types have not been mutated (i.e. Events when EventSourcing) since they were added (marked immutable).
+Script that ensures types have not been mutated (Events when EventSourcing) since they were added (marked immutable).
 
-Currently the events are marked by inheriting from a marker type called 'IEvent'
+Runs on any dotnet environment that supports fsi (dotnet core out of the box).
 
-Runs on any dotnet environment that supports fsi.
 Compatible with: C#, F#
 
 ## Usage
 ### 1. Check your code
-Ensure your event types implement the marker interface ```IEvent``` like the examples below.
+Ensure your event types implement a common marker type e.g. ```IEvent``` in the examples below.
 
 #### Classes (C# / F#)
 ```c#
@@ -46,15 +45,16 @@ dotnet fsi EventLocker.fsx <AssemblyPath> <HashLockFilePath> --addnew
 
 Use the last line provided to call the script (with the ```--addnew``` argument)
 ```cmd
-EventLocker.fsx <AssemblyPath> <HashLockFilePath> [--addnew]
+EventLocker.fsx <AssemblyPath> <HashLockFilePath> [<MarkerType>] [--addnew]
 ```
 - AssemblyPath - the dotnet dll that you want to lock events on
 - HashLockFilePath - the path where the has lock file will be sroted for this assembly
+- MarkerType - optional marker type, defaults to ```IEvent```
 
 ### 5. Adding events
 
-Build as normal and when a new event is added run with the```--addnew``` argument to track the new events. 
-Mutating existing event will still fail the build.
+Build as normal and when a new event is added run with the ```--addnew``` argument to track the new events. 
+Mutating an existing event will still fail the build.
 
 ## Running Success / Failure Cases
 The script will indicate an error (in order to fail a build) if:
