@@ -3,25 +3,56 @@ open System
 let EventLockFileName = "lockedevents.hash"
 
 open System.Reflection
-let matchingTypesInAssembly (predicate: Type -> bool) (asm: Assembly) =
-    let filter = Array.filter (fun (t: Type) -> (isNull t |> not) && t.Assembly = asm && predicate t)
+let tryLoadAssembly a =
+    try
+        a |> Assembly.LoadFile |> Some
+    with
+        | _ -> None    
+
+open System.IO
+let getAssemblyDirectory (a: Assembly) =
+    let uri = UriBuilder(a.CodeBase)
+    let path = Uri.UnescapeDataString uri.Path
+    Path.GetDirectoryName path
+
+let loadAssemblyWithDependencyResolution mainAssemblyPath =
+    let currentDomainAssemblyResolve = new ResolveEventHandler(fun _ args ->
+        let currentAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+        match currentAssemblies |> Array.tryFind (fun a -> a.FullName = args.Name) with
+        | Some(resolvedAssembly) -> resolvedAssembly
+        | None ->
+            let assemblyDir = args.RequestingAssembly |> getAssemblyDirectory
+            let filename = (args.Name.Split(',').[0]) + ".dll".ToLower()
+            Path.Combine(assemblyDir, filename)
+            |> tryLoadAssembly
+            |> Option.defaultValue null
+    )
+    AppDomain.CurrentDomain.add_AssemblyResolve currentDomainAssemblyResolve
+    mainAssemblyPath |> Assembly.LoadFile
+
+let getAllTypes (asm: Assembly) =
+    let filter = Array.filter (fun (t: Type) -> (isNull t |> not) && t.Assembly = asm)
     try
         asm.GetTypes() |> filter
     with
         | :? ReflectionTypeLoadException as ex -> ex.Types |> filter
 
-let getAllTypes asm = asm |> matchingTypesInAssembly (fun _ -> true)
+let getTypesSubclassing (markerType: Type) = 
+    List.filter (fun t -> markerType <> t && not t.IsAbstract && (markerType.IsAssignableFrom t || t.IsSubclassOf markerType))
 
-let getMarkerType (marker: string) allTypes = allTypes |> Array.tryFind (fun (t: Type) -> t.FullName.EndsWith(marker))
+let getChildTypes markerType types =
+    let rec loop parent remaining found =
+        match remaining with
+        | x::xs -> loop x xs found@(getTypesSubclassing parent remaining)
+        | _ -> []    
+    loop markerType types []
 
-let loadAssemblyTypes assemblyPath = assemblyPath |> Assembly.LoadFile |> getAllTypes
+let getMarkerType (marker: string) allTypes = allTypes |> List.tryFind (fun (t: Type) -> t.FullName.EndsWith(marker))
 
 let getMarkerTypeFromAssembly markerType assemblyTypes = 
     match getMarkerType markerType assemblyTypes with
     | Some(t) -> t
     | None -> failwithf "Unable to find marker type '%s'" markerType
-
-let getTypesUsingMarker (markerType: Type) = Array.filter (fun t -> markerType.IsAssignableFrom(t) && markerType <> t)
 
 open Microsoft.FSharp.Reflection
 // Taken from https://github.com/dmannock/FSharpUnionHelpers
@@ -112,12 +143,20 @@ let typeToEventHash (hashFn: string -> string) (t: Type) =
         |> createEventHash (fst x |> Option.defaultValue t.Name))
 
 let getEventHashesForAssembly markerType hashFn assemblyPath =
-    let assemblyTypes = loadAssemblyTypes assemblyPath
+    let mainAssembly = assemblyPath |> loadAssemblyWithDependencyResolution
+    let assemblyDir = mainAssembly |> getAssemblyDirectory
+    let loadedDeps = 
+        mainAssembly.GetReferencedAssemblies()
+        |> Array.map (fun aName -> Path.Combine(assemblyDir, aName.Name))
+        |> Array.choose tryLoadAssembly
+        |> Array.distinct
+        |> List.ofArray
+    let assemblyTypes = 
+        mainAssembly::loadedDeps
+        |> List.collect (getAllTypes >> List.ofArray) 
     let markerType = getMarkerTypeFromAssembly markerType assemblyTypes
-    getTypesUsingMarker markerType assemblyTypes
-    |> List.ofArray
+    getChildTypes markerType assemblyTypes
     |> List.collect (typeToEventHash hashFn)
-    |> List.distinct
 
 //event hash lock file comparison
 type EventComparison =
@@ -147,8 +186,8 @@ let compareEventHash originalHashLock currentHashes =
     ]
 
 let readEventHashesFromFile file =
-    if IO.File.Exists file then
-        IO.File.ReadAllLines file
+    if File.Exists file then
+        File.ReadAllLines file
         |> Array.choose (fun l -> 
             match l.Split(',') with
             | [|t; hash|] -> createEventHash t hash |> Some
