@@ -19,6 +19,7 @@ let tryLoadAssembly a =
         | _ -> 
             None    
 
+open System.Runtime.InteropServices 
 let genPossibleAssemblyPaths (mainAssemblyPath: string) projectPath nugetPackagePaths dependencyName version frameworkVer =
     seq {
         yield Path.GetDirectoryName(mainAssemblyPath)
@@ -33,14 +34,17 @@ let genPossibleAssemblyPaths (mainAssemblyPath: string) projectPath nugetPackage
                 |> Option.bind (Directory.GetDirectories >> Array.sort >> Array.tryLast)
             )
             |> List.map (fun latestPath -> Path.Combine(latestPath, "lib", frameworkVer))
+        yield if RuntimeInformation.IsOSPlatform(OSPlatform.Windows) 
+            then Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".nuget\packages") 
+            else "~/.nuget/packages"               
     }
+
+// quick filter to save loading assemblies we can avoid resolving
+let canSkipDependencyLoading (dependencyName: string) = dependencyName.StartsWith("System.") || dependencyName.StartsWith("Microsoft.") || dependencyName = "FSharp.Core"
 
 let tryLoadAssemblyForPaths genPossiblePathsForDependency (assemblyFullNameOrPath: String) =
     match assemblyFullNameOrPath.Split(',') with
-    | [|dependencyName;_;_;_|] when AppDomain.CurrentDomain.GetAssemblies() |> Array.exists (fun a -> a.FullName = dependencyName) ->
-        None
-    // quick filter to save loading asseblies we know we dont need
-    | [|dependencyName;_;_;_|] when dependencyName.StartsWith("System.") || dependencyName.StartsWith("Microsoft.") || dependencyName.StartsWith("FSharp.Core") ->
+    | [|dependencyName;_;_;_|] when AppDomain.CurrentDomain.GetAssemblies() |> Array.exists (fun a -> a.FullName = dependencyName) || canSkipDependencyLoading dependencyName -> 
         None
     | [|dependencyName;rawVersion;_;_|] ->
         let version = rawVersion.Replace(" Version=", "")
@@ -63,7 +67,7 @@ let getAssemblyDirectory (a: Assembly) =
 
 let loadAssemblyWithDependencyResolution mainAssemblyPath =
     let currentDomainAssemblyResolve = new ResolveEventHandler(fun _ args ->
-        if args.Name.StartsWith("System.") then null
+        if canSkipDependencyLoading args.Name then null
         else
             match AppDomain.CurrentDomain.GetAssemblies() |> Array.tryFind (fun a -> a.FullName = args.Name) with
             | Some(resolvedAssembly) -> 
@@ -205,10 +209,10 @@ let getEventHashesForAssembly markerTypeName hashFn assemblyPath projectPath =
             match getMarkerType markerTypeName assemblyTypes with
             | Some(t) -> t
             | None -> failwithf "Unable to find marker type '%s'" markerTypeName
-        let childTypes = 
+        let concreteSubTypes = 
             assemblyTypes
             |> List.filter (isConcreteSubtypeOf markerType)
-        childTypes
+        concreteSubTypes
         |> List.collect (typeToEventHash hashFn)
     | None -> failwith "failed loading main assembly"
 
