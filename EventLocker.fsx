@@ -20,9 +20,9 @@ let tryLoadAssembly a =
             None    
 
 open System.Runtime.InteropServices 
-let genPossibleAssemblyPaths (mainAssemblyPath: string) projectPath nugetPackagePaths dependencyName version frameworkVer =
+let genPossibleAssemblyFilePaths (mainAssemblyFilePath: string) projectPath nugetPackagePaths dependencyName version frameworkVer =
     seq {
-        yield Path.GetDirectoryName(mainAssemblyPath)
+        yield Path.GetDirectoryName(mainAssemblyFilePath)
         yield Path.Combine(projectPath, "packages", "lib")
         yield! nugetPackagePaths 
             |> List.map (fun nugetPath -> Path.Combine(nugetPath, dependencyName, version, "lib", frameworkVer))
@@ -65,7 +65,7 @@ let getAssemblyDirectory (a: Assembly) =
     let path = Uri.UnescapeDataString uri.Path
     Path.GetDirectoryName path
 
-let loadAssemblyWithDependencyResolution mainAssemblyPath =
+let loadAssemblyWithDependencyResolution mainAssemblyFilePath =
     let currentDomainAssemblyResolve = new ResolveEventHandler(fun _ args ->
         if canSkipDependencyLoading args.Name then null
         else
@@ -76,7 +76,7 @@ let loadAssemblyWithDependencyResolution mainAssemblyPath =
                 null
         )
     AppDomain.CurrentDomain.add_AssemblyResolve currentDomainAssemblyResolve
-    mainAssemblyPath |> tryLoadAssembly
+    mainAssemblyFilePath |> tryLoadAssembly
 
 let getAllTypes (asm: Assembly) =
     let filter = Array.filter (fun (t: Type) -> (isNull t |> not) && t.Assembly = asm)
@@ -179,7 +179,7 @@ let typeToEventHash (hashFn: string -> string) (t: Type) =
         |> hashFn
         |> createEventHash (fst x |> Option.defaultValue t.Name))
 
-let getEventHashesForAssembly markerTypeName hashFn assemblyPath projectPath =
+let getEventHashesForAssembly markerTypeName hashFn assemblyFilePath projectPath =
     let nugetPackagePaths = 
         Path.Combine(projectPath, "obj")
         |> Directory.GetFiles
@@ -190,8 +190,8 @@ let getEventHashesForAssembly markerTypeName hashFn assemblyPath projectPath =
             printfn "failed to get nuget package paths. attempting to continue without resolving those packages"
             List.empty
         )
-    let mainAssembly = assemblyPath |> loadAssemblyWithDependencyResolution
-    let genPossiblePathsForDependency = genPossibleAssemblyPaths assemblyPath projectPath nugetPackagePaths
+    let mainAssembly = assemblyFilePath |> loadAssemblyWithDependencyResolution
+    let genPossiblePathsForDependency = genPossibleAssemblyFilePaths assemblyFilePath projectPath nugetPackagePaths
     match mainAssembly with
     | Some(loaded) -> 
         let refFullPaths = 
@@ -264,10 +264,10 @@ let hashSha (text: string) =
         use sha = new Security.Cryptography.SHA256Managed()
         (System.Text.Encoding.UTF8.GetBytes text |> sha.ComputeHash |> BitConverter.ToString).Replace("-", String.Empty)
 
-let runBuildHashComparison markerType assemblyPath projectPath =
+let runBuildHashComparison markerType assemblyFilePath projectPath =
     match Path.Combine(projectPath, EventLockFileName) |> readEventHashesFromFile with
     | Some(originalEventHashes) -> 
-        getEventHashesForAssembly markerType hashSha assemblyPath projectPath
+        getEventHashesForAssembly markerType hashSha assemblyFilePath projectPath
         |> compareEventHash originalEventHashes
         |> List.choose (
             function 
@@ -281,15 +281,15 @@ let runBuildHashComparison markerType assemblyPath projectPath =
         | errors -> Error (sprintf "Errors in event checks:\n%s" (String.Join("\n", errors)))
     | None -> 
         Error (sprintf "No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:\n\
-            dotnet fsi EventLocker.fsx \"%s\" \"%s\" --addnew\n" assemblyPath projectPath)
+            dotnet fsi EventLocker.fsx \"%s\" \"%s\" --addnew\n" assemblyFilePath projectPath)
 
-let runAddNewHashes markerType assemblyPath projectPath =
+let runAddNewHashes markerType assemblyFilePath projectPath =
     let hashLockFilePath = Path.Combine(projectPath, EventLockFileName)
     let originalEventHashes = 
         readEventHashesFromFile hashLockFilePath
         |> Option.defaultValue List.Empty
     let eventComparisons = 
-        getEventHashesForAssembly markerType hashSha assemblyPath projectPath
+        getEventHashesForAssembly markerType hashSha assemblyFilePath projectPath
         |> compareEventHash originalEventHashes
     let mutatedEvents = eventComparisons |> List.choose (function 
             | EventSignatureChanged(orig, changed) -> Some (sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash)
@@ -318,38 +318,38 @@ let runAddNewHashes markerType assemblyPath projectPath =
 // command line running
 type RunMode = CompareEvents | ForceEventUpdates
 type CommandLineOptions = {
-    AssemblyPath: string
-    HashLockFileLocation: string
+    AssemblyFilePath: string
+    ProjectPath: string
     MarkerType: string
     RunMode: RunMode
 }
 with 
-    static member Create(assemblyPath, hashLockFileLocation, markerType, runMode) = {
-        AssemblyPath = assemblyPath
-        HashLockFileLocation = hashLockFileLocation
+    static member Create(assemblyFilePath, projectPath, markerType, runMode) = {
+        AssemblyFilePath = assemblyFilePath
+        ProjectPath = projectPath
         MarkerType = markerType |> Option.defaultValue "IEvent"
         RunMode = runMode
     }
 
 let parseArgs(args) =
     match args |> Array.skip 1 with
-    | [|assemblyPath;hashLockFileLocation;"--addnew"|]-> 
-        CommandLineOptions.Create(assemblyPath, hashLockFileLocation, None, ForceEventUpdates)
-    | [|assemblyPath;hashLockFileLocation;markerType;"--addnew"|] -> 
-        CommandLineOptions.Create(assemblyPath, hashLockFileLocation, (Some markerType), ForceEventUpdates)
-    | [|assemblyPath;hashLockFileLocation;markerType|] ->
-        CommandLineOptions.Create(assemblyPath, hashLockFileLocation, (Some markerType), CompareEvents)
-    | [|assemblyPath;hashLockFileLocation|] ->
-        CommandLineOptions.Create(assemblyPath, hashLockFileLocation, None, CompareEvents)
-    | _ -> failwith """Assembly path must be passed as the first argument. HashLockFileLocation as the second.
+    | [|assemblyFilePath;hashLockFileLocation;"--addnew"|]-> 
+        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, None, ForceEventUpdates)
+    | [|assemblyFilePath;hashLockFileLocation;markerType;"--addnew"|] -> 
+        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, (Some markerType), ForceEventUpdates)
+    | [|assemblyFilePath;hashLockFileLocation;markerType|] ->
+        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, (Some markerType), CompareEvents)
+    | [|assemblyFilePath;hashLockFileLocation|] ->
+        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, None, CompareEvents)
+    | _ -> failwith """AssemblyFilePath must be passed as the first argument. ProjectPath as the second.
                     To generate initial event locks or add new events run with the '--addnew' argument."""
 
 let run commandLineOptions =
     printfn "\n##########################################################################\n"
     printfn "Running event locker with options:\n %A" commandLineOptions
     match commandLineOptions with
-    | { RunMode = ForceEventUpdates } as cmd -> runAddNewHashes cmd.MarkerType cmd.AssemblyPath cmd.HashLockFileLocation
-    | { RunMode = CompareEvents } as cmd-> runBuildHashComparison cmd.MarkerType cmd.AssemblyPath cmd.HashLockFileLocation
+    | { RunMode = ForceEventUpdates } as cmd -> runAddNewHashes cmd.MarkerType cmd.AssemblyFilePath cmd.ProjectPath
+    | { RunMode = CompareEvents } as cmd-> runBuildHashComparison cmd.MarkerType cmd.AssemblyFilePath cmd.ProjectPath
 
 let printResult res = 
     printfn "\n##########################################################################\n"
