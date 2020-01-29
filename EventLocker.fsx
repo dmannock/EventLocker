@@ -193,11 +193,9 @@ let getEventHashesForAssembly markerTypeName hashFn assemblyFilePath projectPath
         |> tryLoadAssemblyForPaths
     match assemblyFilePath |> loadAssemblyWithDependencyResolution assemblyLoader with
     | Some(loaded) -> 
-        let refFullPaths = 
+        let loadedDeps = 
             loaded.GetReferencedAssemblies()
             |> Array.map (fun aName -> aName.FullName)
-        let loadedDeps = 
-            refFullPaths
             |> Array.choose assemblyLoader
             |> Array.distinct
             |> List.ofArray
@@ -279,8 +277,8 @@ let runBuildHashComparison markerType assemblyFilePath projectPath =
         | [] -> Ok (sprintf "Event checks complete. %i Events have not been mutated" (List.length originalEventHashes))
         | errors -> Error (sprintf "Errors in event checks:\n%s" (String.Join("\n", errors)))
     | None -> 
-        Error (sprintf "No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:\n\
-            dotnet fsi EventLocker.fsx \"%s\" \"%s\" --addnew\n" assemblyFilePath projectPath)
+        Error <| sprintf "No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:\n\
+            dotnet fsi EventLocker.fsx \"%s\" \"%s\" %s --addnew\n" assemblyFilePath (projectPath |> Path.TrimEndingDirectorySeparator) markerType
 
 let runAddNewHashes markerType assemblyFilePath projectPath =
     let hashLockFilePath = Path.Combine(projectPath, EventLockFileName)
@@ -330,16 +328,12 @@ with
         RunMode = runMode
     }
 
-let parseArgs(args) =
+let parseArgs args =
     match args |> Array.skip 1 with
-    | [|assemblyFilePath;hashLockFileLocation;"--addnew"|]-> 
-        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, None, ForceEventUpdates)
-    | [|assemblyFilePath;hashLockFileLocation;markerType;"--addnew"|] -> 
-        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, (Some markerType), ForceEventUpdates)
-    | [|assemblyFilePath;hashLockFileLocation;markerType|] ->
-        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, (Some markerType), CompareEvents)
-    | [|assemblyFilePath;hashLockFileLocation|] ->
-        CommandLineOptions.Create(assemblyFilePath, hashLockFileLocation, None, CompareEvents)
+    | [|assemblyFilePath;projectPath;"--addnew"|]-> CommandLineOptions.Create(assemblyFilePath, projectPath, None, ForceEventUpdates)
+    | [|assemblyFilePath;projectPath;markerType;"--addnew"|] -> CommandLineOptions.Create(assemblyFilePath, projectPath, (Some markerType), ForceEventUpdates)
+    | [|assemblyFilePath;projectPath;markerType|] -> CommandLineOptions.Create(assemblyFilePath, projectPath, (Some markerType), CompareEvents)
+    | [|assemblyFilePath;projectPath|] -> CommandLineOptions.Create(assemblyFilePath, projectPath, None, CompareEvents)
     | _ -> failwith """AssemblyFilePath must be passed as the first argument. ProjectPath as the second.
                     To generate initial event locks or add new events run with the '--addnew' argument."""
 
@@ -354,10 +348,10 @@ let printResult res =
     printfn "\n##########################################################################\n"
     match res with
     | Ok(msg) -> printfn "✔️ %s" msg
-    | Error(msg) -> 
-        printfn "❌ %s" msg
-        exit 1
+    | Error(msg) -> printfn "❌ %s" msg; exit 1
+
 // entry point
-parseArgs(fsi.CommandLineArgs)
+fsi.CommandLineArgs
+|> parseArgs
 |> run
 |> printResult
