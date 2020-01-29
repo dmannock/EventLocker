@@ -65,15 +65,13 @@ let getAssemblyDirectory (a: Assembly) =
     let path = Uri.UnescapeDataString uri.Path
     Path.GetDirectoryName path
 
-let loadAssemblyWithDependencyResolution mainAssemblyFilePath =
+let loadAssemblyWithDependencyResolution assemblyLoader mainAssemblyFilePath =
     let currentDomainAssemblyResolve = new ResolveEventHandler(fun _ args ->
         if canSkipDependencyLoading args.Name then null
         else
             match AppDomain.CurrentDomain.GetAssemblies() |> Array.tryFind (fun a -> a.FullName = args.Name) with
-            | Some(resolvedAssembly) -> 
-                resolvedAssembly
-            | None ->
-                null
+            | Some(resolvedAssembly) -> resolvedAssembly
+            | None -> args.Name |> assemblyLoader |> Option.defaultValue null
         )
     AppDomain.CurrentDomain.add_AssemblyResolve currentDomainAssemblyResolve
     mainAssemblyFilePath |> tryLoadAssembly
@@ -190,16 +188,17 @@ let getEventHashesForAssembly markerTypeName hashFn assemblyFilePath projectPath
             printfn "failed to get nuget package paths. attempting to continue without resolving those packages"
             List.empty
         )
-    let mainAssembly = assemblyFilePath |> loadAssemblyWithDependencyResolution
-    let genPossiblePathsForDependency = genPossibleAssemblyFilePaths assemblyFilePath projectPath nugetPackagePaths
-    match mainAssembly with
+    let assemblyLoader = 
+        genPossibleAssemblyFilePaths assemblyFilePath projectPath nugetPackagePaths
+        |> tryLoadAssemblyForPaths
+    match assemblyFilePath |> loadAssemblyWithDependencyResolution assemblyLoader with
     | Some(loaded) -> 
         let refFullPaths = 
             loaded.GetReferencedAssemblies()
             |> Array.map (fun aName -> aName.FullName)
         let loadedDeps = 
             refFullPaths
-            |> Array.choose (tryLoadAssemblyForPaths genPossiblePathsForDependency)
+            |> Array.choose assemblyLoader
             |> Array.distinct
             |> List.ofArray
         let assemblyTypes = 
