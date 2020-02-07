@@ -1,3 +1,4 @@
+//https://github.com/dmannock/EventLocker/tree/v0.4.0
 open System
 open System.Reflection
 open System.IO
@@ -20,23 +21,23 @@ let tryLoadAssembly a =
             None    
 
 open System.Runtime.InteropServices 
-let genPossibleAssemblyFilePaths (mainAssemblyFilePath: string) projectPath nugetPackagePaths dependencyName version frameworkVer =
+let genPossibleAssemblyFilePaths (mainAssemblyFilePath: string) projectPath nugetPackagePaths (dependencyName: string) version frameworkVer =
+    let dependencyNameForOs = if RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then dependencyName else dependencyName.ToLowerInvariant()
+    let createFullNugetPathForVersion basePath = Path.Combine(basePath, dependencyNameForOs, version, "lib", frameworkVer)
     seq {
         yield Path.GetDirectoryName(mainAssemblyFilePath)
         yield Path.Combine(projectPath, "packages", "lib")
         yield! nugetPackagePaths 
-            |> List.map (fun nugetPath -> Path.Combine(nugetPath, dependencyName, version, "lib", frameworkVer))
+            |> List.map createFullNugetPathForVersion
         yield! nugetPackagePaths
             |> List.choose (fun nugetPath ->
-                Path.Combine(nugetPath, dependencyName)
+                Path.Combine(nugetPath, dependencyNameForOs)
                 |> Some
                 |> Option.filter Directory.Exists
                 |> Option.bind (Directory.GetDirectories >> Array.sort >> Array.tryLast)
             )
             |> List.map (fun latestPath -> Path.Combine(latestPath, "lib", frameworkVer))
-        yield if RuntimeInformation.IsOSPlatform(OSPlatform.Windows) 
-            then Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".nuget\packages") 
-            else "~/.nuget/packages"               
+        yield Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget/packages") |> createFullNugetPathForVersion
     }
 
 // quick filter to save loading assemblies we can avoid resolving
@@ -58,7 +59,7 @@ let tryLoadAssemblyForPaths genPossiblePathsForDependency (assemblyFullNameOrPat
         |> Seq.tryFind File.Exists
         |> Option.bind tryLoadAssembly
     | _ -> 
-        tryLoadAssembly assemblyFullNameOrPath 
+        tryLoadAssembly assemblyFullNameOrPath
 
 let getAssemblyDirectory (a: Assembly) =
     let uri = UriBuilder(a.CodeBase)
@@ -199,13 +200,15 @@ let getEventHashesForAssembly markerTypeName hashFn assemblyFilePath projectPath
             |> Array.choose assemblyLoader
             |> Array.distinct
             |> List.ofArray
-        let assemblyTypes = 
-            loaded::loadedDeps
-            |> List.collect (getAllTypes >> List.ofArray) 
+        let loadedAssemblies = loaded::loadedDeps
+        let assemblyTypes = loadedAssemblies |> List.collect (getAllTypes >> List.ofArray) 
         let markerType = 
             match getMarkerType markerTypeName assemblyTypes with
             | Some(t) -> t
-            | None -> failwithf "Unable to find marker type '%s'" markerTypeName
+            | None -> 
+                printfn "loaded assemblies:"
+                loadedAssemblies |> List.iter (fun a -> printfn "%s" a.FullName)
+                failwithf "Unable to find marker type '%s' in %i loaded assemblies with %i types" markerTypeName (List.length loadedAssemblies) (List.length assemblyTypes)
         let concreteSubTypes = 
             assemblyTypes
             |> List.filter (isConcreteSubtypeOf markerType)
