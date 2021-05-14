@@ -1,4 +1,4 @@
-//https://github.com/dmannock/EventLocker/tree/v0.4.0
+//https://github.com/dmannock/EventLocker/tree/v0.5.0
 open System
 open System.Reflection
 open System.IO
@@ -17,8 +17,7 @@ let tryLoadAssembly a =
     try
         a |> Assembly.LoadFile |> Some
     with
-        | _ -> 
-            None    
+        | _ -> None    
 
 open System.Runtime.InteropServices 
 let genPossibleAssemblyFilePaths (mainAssemblyFilePath: string) projectPath nugetPackagePaths (dependencyName: string) version frameworkVer =
@@ -50,10 +49,8 @@ let tryLoadAssemblyForPaths genPossiblePathsForDependency (assemblyFullNameOrPat
     | [|dependencyName;rawVersion;_;_|] ->
         let version = rawVersion.Replace(" Version=", "")
         let filename = dependencyName + ".dll"
-        //TODO: use cases that force this shortcut to be resolved properly
-        let frameworkVer = "netstandard2.0"
-        let possiblePaths = genPossiblePathsForDependency dependencyName version frameworkVer
-        possiblePaths
+        ["netstandard2.0"; "netstandard1.5"; "netstandard1.0"]  
+        |> Seq.collect (genPossiblePathsForDependency dependencyName version)
         |> Seq.distinct
         |> Seq.map (fun p -> Path.Combine(p, filename))
         |> Seq.tryFind File.Exists
