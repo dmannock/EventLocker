@@ -62,7 +62,7 @@ let tryLoadAssemblyForPaths genPossiblePathsForDependency (assemblyFullNameOrPat
         tryLoadAssembly assemblyFullNameOrPath
 
 let getAssemblyDirectory (a: Assembly) =
-    let uri = UriBuilder(a.CodeBase)
+    let uri = UriBuilder(a.Location)
     let path = Uri.UnescapeDataString uri.Path
     Path.GetDirectoryName path
 
