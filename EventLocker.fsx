@@ -334,8 +334,7 @@ let parseArgs args =
     | [|assemblyFilePath;projectPath;markerType;"--addnew"|] -> CommandLineOptions.Create(assemblyFilePath, projectPath, (Some markerType), ForceEventUpdates)
     | [|assemblyFilePath;projectPath;markerType|] -> CommandLineOptions.Create(assemblyFilePath, projectPath, (Some markerType), CompareEvents)
     | [|assemblyFilePath;projectPath|] -> CommandLineOptions.Create(assemblyFilePath, projectPath, None, CompareEvents)
-    | _ -> failwith """AssemblyFilePath must be passed as the first argument. ProjectPath as the second.
-                    To generate initial event locks or add new events run with the '--addnew' argument."""
+    | _ -> failwith "Usage: 'EventLocker.fsx <AssemblyFilePath> <ProjectPath> [<MarkerType>] [--addnew]'\nSee readme: https://github.com/dmannock/EventLocker"
 
 let run commandLineOptions =
     printfn "\n##########################################################################\n"
