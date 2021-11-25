@@ -1,16 +1,15 @@
-//https://github.com/dmannock/EventLocker/tree/v0.5.1
+//https://github.com/dmannock/EventLocker/tree/net6
 open System
 open System.Reflection
 open System.IO
-open System.Text.RegularExpressions
 
 [<Literal>]
 let EventLockFileName = "lockedevents.hash"
 
 let getPackageFoldersFromPropsFile path =
-    let regexMatch = Regex.Match((File.ReadAllText path), "<NuGetPackageFolders.*?>(.*?)</NuGetPackageFolders>")
+    let regexMatch = System.Text.RegularExpressions.Regex.Match(File.ReadAllText path, "<NuGetPackageFolders.*?>(.*?)</NuGetPackageFolders>")
     if regexMatch.Success then
-        regexMatch.Groups.[1].Value.Split(';') |> Some
+        regexMatch.Groups[1].Value.Split(';') |> Some
     else
         None
 
@@ -73,7 +72,7 @@ let canSkipDependencyLoading (dependencyName: string) =
 
 let tryLoadAssemblyForPaths genPossiblePathsForDependency (assemblyFullNameOrPath: String) =
     match assemblyFullNameOrPath.Split(',') with
-    | [| dependencyName;            _;  _; _ |] when AppDomain.CurrentDomain.GetAssemblies() |> Array.exists (fun a -> a.FullName = dependencyName) || canSkipDependencyLoading dependencyName -> None
+    | [| dependencyName;             _; _; _ |] when AppDomain.CurrentDomain.GetAssemblies() |> Array.exists (fun a -> a.FullName = dependencyName) || canSkipDependencyLoading dependencyName -> None
     | [| dependencyName;    rawVersion; _; _ |] ->
         let version = rawVersion.Replace(" Version=", "")
         let filename = dependencyName + ".dll"
@@ -173,7 +172,7 @@ let rec getTypesPublicSignature (t: Type) =
         UnionTypeSig(t.Name, unions)
     else if
         t.IsClass && t <> typeof<String>
-        && not (typeof<Collections.IEnumerable>.IsAssignableFrom (t))
+        && not (typeof<Collections.IEnumerable>.IsAssignableFrom t)
     then
         let properties =
             t.GetProperties(publicBindingFlags)
@@ -188,14 +187,14 @@ let rec getTypesPublicSignature (t: Type) =
         SimpleTypeSig(t.ToString())
 
 let rec toSignatureString signature =
-    let fieldToString { Identifier = ident; TypeSignature = typeSig } = sprintf "%s:%s" ident (toSignatureString typeSig)
+    let fieldToString { Identifier = ident; TypeSignature = typeSig } = $"{ident}:{toSignatureString typeSig}"
     match signature with
     | SimpleTypeSig (typeName) -> typeName
-    | ClassTypeSig (typeName, fields) -> sprintf "%s={%s}" typeName (String.Join("#", fields |> List.map fieldToString))
-    | RecordTypeSig (typeName, fields) -> sprintf "%s={%s}" typeName (String.Join(";", fields |> List.map fieldToString))
-    | UnionTypeSig (typeName, unions) -> sprintf "%s=%s" typeName (String.Join("", unions |> List.map (fieldToString >> sprintf "|%s")))
-    | TupleTypeSig (fields) -> sprintf "(%s)" (String.Join(",", fields |> List.map toSignatureString))
-    | EnumTypeSig (typeName, fieldTypeName, fields) -> sprintf "%s:%s={%s}" typeName fieldTypeName (String.Join(",", fields))
+    | ClassTypeSig (typeName, fields) -> $"""{typeName}={{{ fields |> List.map fieldToString |> String.concat "#" }}}"""
+    | RecordTypeSig (typeName, fields) -> $"""{typeName}={{{ fields |> List.map fieldToString |> String.concat ";" }}}"""
+    | UnionTypeSig (typeName, unions) -> $"""{typeName}={unions |> List.fold (fun acc union -> acc + "|" + fieldToString union) ""}"""
+    | TupleTypeSig (fields) -> $"""({fields |> List.map toSignatureString |> String.concat "," })"""
+    | EnumTypeSig (typeName, fieldTypeName, fields) -> $"""{typeName}:{fieldTypeName}={{{String.concat "," fields}}}"""
 //end of borrowed FSharpUnionHelpers code
 
 let groupUnionCaseEvents =
@@ -226,11 +225,11 @@ let typeToEventHash (hashFn: string -> string) (t: Type) =
     getTypesPublicSignature t
     |> groupUnionCaseEvents
     |> List.map
-        (fun x ->
-            snd x
+        (fun (name, signature) ->
+            signature
             |> toSignatureString
             |> hashFn
-            |> createEventHash (fst x |> Option.defaultValue t.Name))
+            |> createEventHash (Option.defaultValue t.Name name))
 
 let getEventHashesForAssembly markerTypeName hashFn assemblyFilePath projectPath =
     let nugetPackagePaths =
@@ -267,12 +266,8 @@ let getEventHashesForAssembly markerTypeName hashFn assemblyFilePath projectPath
             | Some (t) -> t
             | None ->
                 printfn "loaded assemblies:"
-                loadedAssemblies |> List.iter (fun a -> printfn "%s" a.FullName)
-                failwithf
-                    "Unable to find marker type '%s' in %i loaded assemblies with %i types"
-                    markerTypeName
-                    (List.length loadedAssemblies)
-                    (List.length assemblyTypes)
+                loadedAssemblies |> List.iter (fun a -> printfn $"{a.FullName}")
+                failwithf $"Unable to find marker type '{markerTypeName}' in {List.length loadedAssemblies} loaded assemblies with {List.length assemblyTypes} types"
 
         let concreteSubTypes = assemblyTypes |> List.filter (isConcreteSubtypeOf markerType)
 
@@ -292,21 +287,22 @@ let eventListToMap = List.map (fun x -> x.Type, x) >> Map.ofList
 let compareEventHash originalHashLock currentHashes =
     let origEventsMap = originalHashLock |> eventListToMap
     let currentEventsMap = currentHashes |> eventListToMap
-    [ yield!
-        currentHashes
-        |> Seq.map
-            (fun current ->
-                match Map.tryFind current.Type origEventsMap with
-                | Some (existing) when existing.Hash = current.Hash -> SameEventSignature(existing)
-                | Some (existing) -> EventSignatureChanged(existing, current)
-                | None -> NewEventSignature(current))
-      yield!
-          originalHashLock
-          |> Seq.choose
-              (fun orig ->
-                  match Map.tryFind orig.Type currentEventsMap with
-                  | Some (_) -> None
-                  | None -> DeletedEventSignature(orig) |> Some) ]
+    [ 
+        yield!
+            currentHashes
+            |> Seq.map
+                (fun current ->
+                    match Map.tryFind current.Type origEventsMap with
+                    | Some (existing) when existing.Hash = current.Hash -> SameEventSignature(existing)
+                    | Some (existing) -> EventSignatureChanged(existing, current)
+                    | None -> NewEventSignature(current))
+        yield!
+            originalHashLock
+            |> Seq.choose
+                (fun orig ->
+                    match Map.tryFind orig.Type currentEventsMap with
+                    | Some (_) -> None
+                    | None -> DeletedEventSignature(orig) |> Some) ]
 
 let readEventHashesFromFile file =
     if File.Exists file then
@@ -325,14 +321,14 @@ let readEventHashesFromFile file =
 let saveEventHashesToFile file eventHashes =
     let lines =
         eventHashes
-        |> Seq.map (fun { Type = t; Hash = hash } -> sprintf "%s,%s" t hash)
+        |> Seq.map (fun { Type = t; Hash = hash } -> $"{t},{hash}")
     File.WriteAllLines(file, lines)
 
 let hashSha (text: string) =
     if String.IsNullOrEmpty text then
         String.Empty
     else
-        use sha = new Security.Cryptography.SHA256Managed()
+        use sha = Security.Cryptography.SHA256.Create()
         (System.Text.Encoding.UTF8.GetBytes text |> sha.ComputeHash |> BitConverter.ToString).Replace("-", String.Empty)
 
 let runBuildHashComparison markerType assemblyFilePath projectPath =
@@ -343,21 +339,16 @@ let runBuildHashComparison markerType assemblyFilePath projectPath =
         |> List.choose
             (function
             | SameEventSignature (_) -> None
-            | NewEventSignature (newEvent) -> Some(sprintf "New Event: %A" newEvent)
-            | DeletedEventSignature (deletedEvent) -> Some(sprintf "Deleted Event: %A" deletedEvent)
-            | EventSignatureChanged (orig, changed) ->
-                Some(sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash))
+            | NewEventSignature (newEvent) -> Some $"New Event: {newEvent}"
+            | DeletedEventSignature (deletedEvent) -> Some $"Deleted Event: {deletedEvent}"
+            | EventSignatureChanged (orig, changed) -> Some $"Changed Event '{orig.Type}'. Original hash: {orig.Hash} Current hash: {changed.Hash}")
         |> function
-        | [] -> Ok <| sprintf "Event checks complete. %i Events have not been mutated" (List.length originalEventHashes)
-        | errors -> Error <| sprintf "Errors in event checks:\n%s" (String.Join("\n", errors))
+        | [] -> Ok $"Event checks complete. {List.length originalEventHashes} Events have not been mutated"
+        | errors -> Error ($"{List.length errors} Errors in event checks:\n" + String.concat "\n" errors)
     | None ->
-        Error <| sprintf
-            "No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:\n\
-            dotnet fsi EventLocker.fsx \"%s\" \"%s\" %s --addnew\n"
-            assemblyFilePath
-            (Path.TrimEndingDirectorySeparator projectPath)
-            markerType
-
+        Error $"No event lock file found. To start using event locking generate the initial lock by runing with the '--addnew' argument:\n\
+            dotnet fsi EventLocker.fsx \"{assemblyFilePath}\" \"{Path.TrimEndingDirectorySeparator projectPath}\" {markerType} --addnew\n"
+    
 let runAddNewHashes markerType assemblyFilePath projectPath =
     let hashLockFilePath = Path.Combine(projectPath, EventLockFileName)
 
@@ -373,8 +364,8 @@ let runAddNewHashes markerType assemblyFilePath projectPath =
         eventComparisons
         |> List.choose
             (function
-            | EventSignatureChanged (orig, changed) -> Some <| sprintf "Changed Event '%s'. Original hash: %s Current hash: %s" orig.Type orig.Hash changed.Hash
-            | DeletedEventSignature (deletedEvent) -> Some <| sprintf "Deleted Event %A" deletedEvent
+            | EventSignatureChanged (orig, changed) -> Some $"Changed Event '{orig.Type}'. Original hash: {orig.Hash} Current hash: {changed.Hash}"   
+            | DeletedEventSignature (deletedEvent) -> Some $"Deleted Event {deletedEvent}"
             | _ -> None)
 
     let newEvents =
@@ -385,11 +376,11 @@ let runAddNewHashes markerType assemblyFilePath projectPath =
             | _ -> None)
 
     let numOfOriginalEventHashes = List.length originalEventHashes
-    printfn "mutatedEvents events: %A" mutatedEvents
-    printfn "new events: %A" newEvents
+    printfn $"mutatedEvents events: {mutatedEvents}" 
+    printfn $"new events: {newEvents}" 
 
     match mutatedEvents, newEvents with
-    | [], [] -> Ok <| sprintf "No new events to add to the existing %i events." numOfOriginalEventHashes
+    | [], [] -> Ok $"No new events to add to the existing {numOfOriginalEventHashes} events." 
     | [], newEvents ->
         let origLookup = originalEventHashes |> eventListToMap
 
@@ -402,12 +393,8 @@ let runAddNewHashes markerType assemblyFilePath projectPath =
         saveEventHashesToFile hashLockFilePath originalWithNewEvents
         let numOfTotalEvents = List.length originalWithNewEvents
 
-        Ok <| sprintf
-            "%i Event hashes added the the original %i. New total of %i"
-            (numOfTotalEvents - numOfOriginalEventHashes)
-            numOfOriginalEventHashes
-            numOfTotalEvents
-    | mutatedEvents, _ -> Error <| sprintf "Cannot update event hashes. Events have been mutated:\n%s" (String.Join("\n", mutatedEvents))
+        Ok $"{numOfTotalEvents - numOfOriginalEventHashes} Event hashes added the the original {numOfOriginalEventHashes}. New total of {numOfTotalEvents}"
+    | mutatedEvents, _ -> Error ($"Cannot update event hashes. Events have been mutated:\n" + String.concat "\n" mutatedEvents)
 
 // command line running
 type RunMode =
@@ -426,7 +413,7 @@ with
         ProjectPath = projectPath
         MarkerType = markerType |> Option.defaultValue "IEvent"
         RunMode = runMode
-     }
+    }
 
 let parseArgs args =
     match args |> Array.skip 1 with
@@ -438,7 +425,7 @@ let parseArgs args =
 
 let run commandLineOptions =
     printfn "\n##########################################################################\n"
-    printfn "Running event locker with options:\n %A" commandLineOptions
+    printfn $"Running event locker with options:\n {commandLineOptions}"
     match commandLineOptions with
     | { RunMode = ForceEventUpdates } as cmd -> runAddNewHashes cmd.MarkerType cmd.AssemblyFilePath cmd.ProjectPath
     | { RunMode = CompareEvents } as cmd -> runBuildHashComparison cmd.MarkerType cmd.AssemblyFilePath cmd.ProjectPath
