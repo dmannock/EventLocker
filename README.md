@@ -11,6 +11,12 @@ This script ensures types have not been mutated. This is useful with Events when
 ## Requirements
 Runs on any dotnet environment that supports fsi ([dotnet core SDK](https://dotnet.microsoft.com/download) out of the box).
 
+### net6 Version
+Available in the [net6 branch](https://github.com/dmannock/EventLocker/tree/net6)
+
+Main difference
+- Cryptography methods moved (marked obsolete)
+
 ## Usage
 ### 1. Check your code
 Ensure your event types implement a common marker type e.g. ```IEvent``` in the examples below.
